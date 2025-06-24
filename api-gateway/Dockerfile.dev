@@ -1,0 +1,44 @@
+# Development Dockerfile for API Gateway
+FROM node:18-alpine
+
+# Install curl for health checks
+RUN apk add --no-cache curl
+
+# Create app directory
+WORKDIR /app
+
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 gateway
+
+# Copy package files
+COPY package*.json ./
+COPY shared/package*.json ./shared/
+COPY api-gateway/package*.json ./api-gateway/
+
+# Install dependencies
+RUN npm ci
+RUN cd shared && npm ci
+RUN cd api-gateway && npm ci
+
+# Copy source code
+COPY . .
+
+# Change ownership
+RUN chown -R gateway:nodejs /app
+
+# Set user
+USER gateway
+
+# Expose port
+EXPOSE 3000
+
+# Set working directory to api-gateway
+WORKDIR /app/api-gateway
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:3000/health || exit 1
+
+# Start the application in development mode
+CMD ["npm", "run", "dev"]

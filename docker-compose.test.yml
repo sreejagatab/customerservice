@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  # PostgreSQL for testing
+  postgres:
+    image: postgres:15-alpine
+    container_name: test-postgres
+    environment:
+      POSTGRES_DB: test_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - test_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - test-network
+
+  # Redis for testing
+  redis:
+    image: redis:7-alpine
+    container_name: test-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - test_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - test-network
+
+  # RabbitMQ for testing
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: test-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    volumes:
+      - test_rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - test-network
+
+  # Elasticsearch for testing (optional)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: test-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9201:9200"
+    volumes:
+      - test_elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - test-network
+
+  # MinIO for testing (S3-compatible storage)
+  minio:
+    image: minio/minio:latest
+    container_name: test-minio
+    environment:
+      MINIO_ROOT_USER: testuser
+      MINIO_ROOT_PASSWORD: testpassword
+    ports:
+      - "9001:9000"
+      - "9091:9090"
+    volumes:
+      - test_minio_data:/data
+    command: server /data --console-address ":9090"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - test-network
+
+  # Mailhog for testing emails
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: test-mailhog
+    ports:
+      - "1026:1025"  # SMTP
+      - "8026:8025"  # Web UI
+    networks:
+      - test-network
+
+volumes:
+  test_postgres_data:
+    driver: local
+  test_redis_data:
+    driver: local
+  test_rabbitmq_data:
+    driver: local
+  test_elasticsearch_data:
+    driver: local
+  test_minio_data:
+    driver: local
+
+networks:
+  test-network:
+    driver: bridge

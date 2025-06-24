@@ -1,0 +1,170 @@
+version: '3.8'
+
+services:
+  # Integration Service API
+  integration-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: integration-api
+    ports:
+      - "3003:3003"
+    environment:
+      - NODE_ENV=production
+      - PORT=3003
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/universal_ai_cs
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-http://localhost:3003/auth/google/callback}
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET}
+      - MICROSOFT_REDIRECT_URI=${MICROSOFT_REDIRECT_URI:-http://localhost:3003/auth/microsoft/callback}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-your-webhook-secret-key}
+      - WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL:-http://localhost:3003/webhooks}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - integration-network
+    healthcheck:
+      test: ["CMD", "node", "dist/health-check.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Integration Service Worker
+  integration-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: integration-worker
+    command: ["node", "dist/workers/index.js"]
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/universal_ai_cs
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-your-webhook-secret-key}
+      - QUEUE_CONCURRENCY=5
+      - QUEUE_MAX_ATTEMPTS=3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - integration-network
+    deploy:
+      replicas: 2
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: integration-postgres
+    environment:
+      - POSTGRES_DB=universal_ai_cs
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - integration-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d universal_ai_cs"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache & Queue
+  redis:
+    image: redis:7-alpine
+    container_name: integration-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - integration-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Commander (Development)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: integration-redis-commander
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - integration-network
+    profiles:
+      - development
+
+  # pgAdmin (Development)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: integration-pgadmin
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@example.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+    ports:
+      - "8080:80"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - integration-network
+    profiles:
+      - development
+
+  # Nginx Load Balancer
+  nginx:
+    image: nginx:alpine
+    container_name: integration-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - integration-api
+    restart: unless-stopped
+    networks:
+      - integration-network
+    profiles:
+      - production
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  integration-network:
+    driver: bridge

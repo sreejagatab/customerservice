@@ -1,0 +1,253 @@
+name: Production Deployment
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Pre-deployment checks
+  pre-deployment-checks:
+    name: Pre-deployment Checks
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      environment: ${{ steps.env.outputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            echo "version=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            echo "environment=production" >> $GITHUB_OUTPUT
+          else
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate deployment
+        run: |
+          echo "Deploying version ${{ steps.version.outputs.version }} to ${{ steps.env.outputs.environment }}"
+
+  # Database migration
+  database-migration:
+    name: Database Migration
+    runs-on: ubuntu-latest
+    needs: [pre-deployment-checks]
+    environment: ${{ needs.pre-deployment-checks.outputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          cd database && npm ci
+
+      - name: Run database migrations
+        run: cd database && npm run migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Verify migration
+        run: cd database && npm run migrate:status
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+  # Deploy services
+  deploy-services:
+    name: Deploy Services
+    runs-on: ubuntu-latest
+    needs: [pre-deployment-checks, database-migration]
+    environment: ${{ needs.pre-deployment-checks.outputs.environment }}
+
+    strategy:
+      matrix:
+        service: [auth-service, api-gateway, integration-service, ai-service, message-service]
+      fail-fast: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > kubeconfig
+          export KUBECONFIG=kubeconfig
+
+      - name: Deploy ${{ matrix.service }}
+        run: |
+          # Update image tag in deployment
+          sed -i "s|IMAGE_TAG|${{ needs.pre-deployment-checks.outputs.version }}|g" k8s/${{ needs.pre-deployment-checks.outputs.environment }}/${{ matrix.service }}.yaml
+          
+          # Apply deployment
+          kubectl apply -f k8s/${{ needs.pre-deployment-checks.outputs.environment }}/${{ matrix.service }}.yaml
+          
+          # Wait for rollout
+          kubectl rollout status deployment/${{ matrix.service }} -n universal-ai-cs --timeout=300s
+
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n universal-ai-cs -l app=${{ matrix.service }}
+          kubectl logs -n universal-ai-cs -l app=${{ matrix.service }} --tail=50
+
+  # Deploy frontend
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    needs: [pre-deployment-checks, deploy-services]
+    environment: ${{ needs.pre-deployment-checks.outputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          cd frontend && npm ci
+
+      - name: Build frontend
+        run: cd frontend && npm run build
+        env:
+          VITE_API_URL: ${{ secrets.API_URL }}
+          VITE_WS_URL: ${{ secrets.WS_URL }}
+          VITE_ENVIRONMENT: ${{ needs.pre-deployment-checks.outputs.environment }}
+
+      - name: Deploy to CDN
+        run: |
+          # Upload to S3/CloudFront or your CDN
+          aws s3 sync frontend/dist/ s3://${{ secrets.FRONTEND_BUCKET }}/ --delete
+          aws cloudfront create-invalidation --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} --paths "/*"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+
+  # Post-deployment tests
+  post-deployment-tests:
+    name: Post-deployment Tests
+    runs-on: ubuntu-latest
+    needs: [pre-deployment-checks, deploy-services, deploy-frontend]
+    environment: ${{ needs.pre-deployment-checks.outputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run health checks
+        run: |
+          # Wait for services to be ready
+          sleep 30
+          
+          # Check API Gateway health
+          curl -f ${{ secrets.API_URL }}/health || exit 1
+          
+          # Check Auth Service health
+          curl -f ${{ secrets.API_URL }}/api/v1/auth/health || exit 1
+
+      - name: Run smoke tests
+        run: npm run test:smoke
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+
+      - name: Run performance tests
+        run: npm run test:performance
+        env:
+          API_URL: ${{ secrets.API_URL }}
+
+  # Notify deployment status
+  notify-deployment:
+    name: Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [pre-deployment-checks, post-deployment-tests]
+    if: always()
+
+    steps:
+      - name: Notify success
+        if: needs.post-deployment-tests.result == 'success'
+        run: |
+          echo "✅ Deployment successful!"
+          # Add Slack/Discord/email notification here
+
+      - name: Notify failure
+        if: needs.post-deployment-tests.result == 'failure'
+        run: |
+          echo "❌ Deployment failed!"
+          # Add Slack/Discord/email notification here
+
+      - name: Create deployment record
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              environment: '${{ needs.pre-deployment-checks.outputs.environment }}',
+              description: 'Deployment of version ${{ needs.pre-deployment-checks.outputs.version }}',
+              auto_merge: false,
+              required_contexts: []
+            });
+
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.data.id,
+              state: '${{ needs.post-deployment-tests.result == 'success' && 'success' || 'failure' }}',
+              description: 'Deployment ${{ needs.post-deployment-tests.result == 'success' && 'completed successfully' || 'failed' }}',
+              environment_url: '${{ secrets.FRONTEND_URL }}'
+            });
