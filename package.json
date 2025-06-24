@@ -1,0 +1,102 @@
+{
+  "name": "universal-ai-customer-service",
+  "version": "1.0.0",
+  "description": "Universal AI Customer Service Platform - Connect & Play AI Automation for Any Business",
+  "private": true,
+  "workspaces": [
+    "api-gateway",
+    "auth-service",
+    "integration-service",
+    "ai-service",
+    "message-service",
+    "workflow-service",
+    "analytics-service",
+    "notification-service",
+    "admin-service",
+    "frontend",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "concurrently \"npm run dev -w api-gateway\" \"npm run dev -w auth-service\" \"npm run dev -w integration-service\" \"npm run dev -w ai-service\" \"npm run dev -w message-service\" \"npm run dev -w workflow-service\" \"npm run dev -w analytics-service\" \"npm run dev -w notification-service\" \"npm run dev -w admin-service\"",
+    "dev:frontend": "npm run dev -w frontend",
+    "build": "npm run build --workspaces",
+    "build:backend": "npm run build --workspaces --if-present --ignore frontend",
+    "build:frontend": "npm run build -w frontend",
+    "test": "npm run test --workspaces",
+    "test:unit": "npm run test:unit --workspaces --if-present",
+    "test:integration": "npm run test:integration --workspaces --if-present",
+    "test:e2e": "npm run test:e2e --workspaces --if-present",
+    "test:coverage": "npm run test:coverage --workspaces --if-present",
+    "lint": "npm run lint --workspaces",
+    "lint:fix": "npm run lint:fix --workspaces",
+    "format": "prettier --write \"**/*.{js,ts,tsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{js,ts,tsx,json,md}\"",
+    "install:all": "npm install && npm install --workspaces",
+    "clean": "npm run clean --workspaces --if-present && rm -rf node_modules",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "db:migrate": "npm run db:migrate -w database",
+    "db:seed": "npm run db:seed -w database",
+    "db:reset": "npm run db:reset -w database",
+    "start": "npm run start --workspaces --if-present",
+    "start:prod": "NODE_ENV=production npm run start",
+    "health": "npm run health --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "concurrently": "^8.2.2",
+    "eslint": "^8.54.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-import": "^2.29.0",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-security": "^1.7.1",
+    "husky": "^8.0.3",
+    "lint-staged": "^15.1.0",
+    "prettier": "^3.1.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/universal-ai-customer-service.git"
+  },
+  "keywords": [
+    "ai",
+    "customer-service",
+    "automation",
+    "saas",
+    "microservices",
+    "integration",
+    "chatbot",
+    "workflow"
+  ],
+  "author": "Universal AI Customer Service Team",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/your-org/universal-ai-customer-service/issues"
+  },
+  "homepage": "https://github.com/your-org/universal-ai-customer-service#readme",
+  "husky": {
+    "hooks": {
+      "pre-commit": "lint-staged",
+      "pre-push": "npm run test && npm run lint"
+    }
+  },
+  "lint-staged": {
+    "*.{js,ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
+  }
+}
