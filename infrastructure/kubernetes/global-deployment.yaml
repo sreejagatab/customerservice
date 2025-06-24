@@ -1,0 +1,365 @@
+# Global Multi-Region Kubernetes Deployment Configuration
+# Supports deployment across US, EU, APAC, LATAM, and MENA regions
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: universal-ai-cs
+  labels:
+    app: universal-ai-cs
+    compliance: enterprise
+---
+# Global ConfigMap for multi-region settings
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: global-config
+  namespace: universal-ai-cs
+data:
+  # Regional endpoints
+  US_EAST_ENDPOINT: "https://us-east-1.universalai-cs.com"
+  US_WEST_ENDPOINT: "https://us-west-2.universalai-cs.com"
+  EU_WEST_ENDPOINT: "https://eu-west-1.universalai-cs.com"
+  APAC_SOUTHEAST_ENDPOINT: "https://ap-southeast-1.universalai-cs.com"
+  CANADA_CENTRAL_ENDPOINT: "https://ca-central-1.universalai-cs.com"
+  
+  # Data residency settings
+  GDPR_REGIONS: "eu-west-1,eu-central-1"
+  CCPA_REGIONS: "us-west-2,us-east-1"
+  PIPEDA_REGIONS: "ca-central-1"
+  
+  # Compliance settings
+  ENCRYPTION_AT_REST: "true"
+  ENCRYPTION_IN_TRANSIT: "true"
+  AUDIT_LOGGING: "true"
+  DATA_RETENTION_DAYS: "2555" # 7 years
+  
+  # Performance settings
+  GLOBAL_CACHE_TTL: "300"
+  CDN_ENABLED: "true"
+  LOAD_BALANCER_ALGORITHM: "least_connections"
+---
+# Global Secret for encryption keys
+apiVersion: v1
+kind: Secret
+metadata:
+  name: global-encryption-keys
+  namespace: universal-ai-cs
+type: Opaque
+data:
+  # Base64 encoded encryption keys (replace with actual keys)
+  DATABASE_ENCRYPTION_KEY: "YWVzLTI1Ni1nY20ta2V5LWZvci1kYXRhYmFzZQ=="
+  FILE_ENCRYPTION_KEY: "YWVzLTI1Ni1nY20ta2V5LWZvci1maWxlcw=="
+  BACKUP_ENCRYPTION_KEY: "YWVzLTI1Ni1nY20ta2V5LWZvci1iYWNrdXBz"
+  AUDIT_SIGNING_KEY: "cnNhLXByaXZhdGUta2V5LWZvci1hdWRpdA=="
+---
+# Global Load Balancer Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: global-load-balancer
+  namespace: universal-ai-cs
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 443
+    targetPort: 8443
+    protocol: TCP
+    name: https
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: api-gateway
+    tier: global
+---
+# API Gateway Deployment with Global Configuration
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway-global
+  namespace: universal-ai-cs
+  labels:
+    app: api-gateway
+    tier: global
+    compliance: soc2-iso27001
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: api-gateway
+      tier: global
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        tier: global
+        compliance: soc2-iso27001
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 2000
+      containers:
+      - name: api-gateway
+        image: universalai-cs/api-gateway:latest
+        ports:
+        - containerPort: 8443
+          name: https
+        - containerPort: 8080
+          name: http
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: REGION
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['topology.kubernetes.io/region']
+        - name: COMPLIANCE_MODE
+          value: "enterprise"
+        - name: ENCRYPTION_ENABLED
+          value: "true"
+        - name: AUDIT_LOGGING
+          value: "true"
+        envFrom:
+        - configMapRef:
+            name: global-config
+        - secretRef:
+            name: global-encryption-keys
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /app/cache
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: cache
+        emptyDir: {}
+---
+# Horizontal Pod Autoscaler for Global Scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway-hpa
+  namespace: universal-ai-cs
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway-global
+  minReplicas: 3
+  maxReplicas: 50
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+---
+# Network Policy for Security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: global-network-policy
+  namespace: universal-ai-cs
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: universal-ai-cs
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: universal-ai-cs
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+  - to: [] # Allow external traffic for API calls
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+---
+# Pod Security Policy
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: universal-ai-cs-psp
+  namespace: universal-ai-cs
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  seLinux:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'RunAsAny'
+---
+# Service Monitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: universal-ai-cs-metrics
+  namespace: universal-ai-cs
+  labels:
+    app: universal-ai-cs
+    compliance: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+---
+# Istio Virtual Service for Global Routing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: global-routing
+  namespace: universal-ai-cs
+spec:
+  hosts:
+  - "*.universalai-cs.com"
+  gateways:
+  - universal-ai-cs-gateway
+  http:
+  - match:
+    - headers:
+        x-region:
+          exact: "us-east-1"
+    route:
+    - destination:
+        host: api-gateway-us-east
+        port:
+          number: 8080
+  - match:
+    - headers:
+        x-region:
+          exact: "eu-west-1"
+    route:
+    - destination:
+        host: api-gateway-eu-west
+        port:
+          number: 8080
+  - match:
+    - headers:
+        x-region:
+          exact: "ap-southeast-1"
+    route:
+    - destination:
+        host: api-gateway-apac
+        port:
+          number: 8080
+  - route:
+    - destination:
+        host: api-gateway-global
+        port:
+          number: 8080
+      weight: 100
+---
+# Istio Gateway for Global Access
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: universal-ai-cs-gateway
+  namespace: universal-ai-cs
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: universal-ai-cs-tls
+    hosts:
+    - "*.universalai-cs.com"
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*.universalai-cs.com"
+    tls:
+      httpsRedirect: true

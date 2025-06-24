@@ -1,0 +1,215 @@
+# Baseline Performance Test Configuration
+# Tests basic functionality with minimal load to establish performance baseline
+
+config:
+  target: 'http://localhost:3000'
+  phases:
+    - duration: 600  # 10 minutes
+      arrivalRate: 1  # 1 user per second
+      name: "Baseline load test"
+  
+  # Global configuration
+  timeout: 30
+  
+  # Variables for dynamic data
+  variables:
+    testUserId: "test-user-{{ $randomString() }}"
+    testOrgId: "test-org-{{ $randomString() }}"
+    testEmail: "test-{{ $randomString() }}@example.com"
+  
+  # Plugins for enhanced metrics
+  plugins:
+    metrics-by-endpoint:
+      useOnlyRequestNames: true
+    
+  # Custom metrics
+  processor: "./load-test-processor.js"
+
+# Test scenarios
+scenarios:
+  - name: "Health Check"
+    weight: 10
+    flow:
+      - get:
+          url: "/health"
+          name: "Health Check"
+          expect:
+            - statusCode: 200
+
+  - name: "Authentication Flow"
+    weight: 20
+    flow:
+      - post:
+          url: "/api/auth/register"
+          name: "User Registration"
+          json:
+            email: "{{ testEmail }}"
+            password: "TestPassword123!"
+            name: "Test User"
+            organizationName: "Test Organization"
+          capture:
+            - json: "$.data.user.id"
+              as: "userId"
+            - json: "$.data.token"
+              as: "authToken"
+          expect:
+            - statusCode: 201
+
+      - post:
+          url: "/api/auth/login"
+          name: "User Login"
+          json:
+            email: "{{ testEmail }}"
+            password: "TestPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "loginToken"
+          expect:
+            - statusCode: 200
+
+      - get:
+          url: "/api/auth/profile"
+          name: "Get User Profile"
+          headers:
+            Authorization: "Bearer {{ loginToken }}"
+          expect:
+            - statusCode: 200
+
+  - name: "Dashboard Operations"
+    weight: 30
+    flow:
+      # Authenticate first
+      - post:
+          url: "/api/auth/login"
+          name: "Login for Dashboard"
+          json:
+            email: "admin@example.com"
+            password: "AdminPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "dashboardToken"
+
+      - get:
+          url: "/api/analytics/dashboard"
+          name: "Load Dashboard"
+          headers:
+            Authorization: "Bearer {{ dashboardToken }}"
+          expect:
+            - statusCode: 200
+
+      - get:
+          url: "/api/analytics/metrics"
+          name: "Load Metrics"
+          headers:
+            Authorization: "Bearer {{ dashboardToken }}"
+          expect:
+            - statusCode: 200
+
+      - get:
+          url: "/api/integrations"
+          name: "List Integrations"
+          headers:
+            Authorization: "Bearer {{ dashboardToken }}"
+          expect:
+            - statusCode: 200
+
+  - name: "Message Operations"
+    weight: 25
+    flow:
+      # Authenticate
+      - post:
+          url: "/api/auth/login"
+          name: "Login for Messages"
+          json:
+            email: "admin@example.com"
+            password: "AdminPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "messageToken"
+
+      - get:
+          url: "/api/messages"
+          name: "List Messages"
+          headers:
+            Authorization: "Bearer {{ messageToken }}"
+          qs:
+            page: 1
+            limit: 20
+          expect:
+            - statusCode: 200
+
+      - post:
+          url: "/api/messages"
+          name: "Create Message"
+          headers:
+            Authorization: "Bearer {{ messageToken }}"
+          json:
+            subject: "Test Message {{ $randomString() }}"
+            content: "This is a test message for load testing"
+            from: "{{ testEmail }}"
+            to: "support@example.com"
+            type: "email"
+          capture:
+            - json: "$.data.id"
+              as: "messageId"
+          expect:
+            - statusCode: 201
+
+      - get:
+          url: "/api/messages/{{ messageId }}"
+          name: "Get Message Details"
+          headers:
+            Authorization: "Bearer {{ messageToken }}"
+          expect:
+            - statusCode: 200
+
+  - name: "AI Processing"
+    weight: 15
+    flow:
+      # Authenticate
+      - post:
+          url: "/api/auth/login"
+          name: "Login for AI"
+          json:
+            email: "admin@example.com"
+            password: "AdminPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "aiToken"
+
+      - post:
+          url: "/api/ai/classify"
+          name: "Classify Message"
+          headers:
+            Authorization: "Bearer {{ aiToken }}"
+          json:
+            content: "I need help with my order #12345. It hasn't arrived yet."
+            metadata:
+              source: "email"
+              priority: "normal"
+          expect:
+            - statusCode: 200
+
+      - post:
+          url: "/api/ai/generate-response"
+          name: "Generate AI Response"
+          headers:
+            Authorization: "Bearer {{ aiToken }}"
+          json:
+            message: "Customer is asking about order status"
+            context:
+              customerTier: "premium"
+              previousInteractions: 2
+            tone: "professional"
+          expect:
+            - statusCode: 200
+
+# Performance thresholds
+expect:
+  # Response time thresholds
+  - p95: 500  # 95th percentile should be under 500ms
+  - p99: 1000  # 99th percentile should be under 1000ms
+  - median: 200  # Median should be under 200ms
+  
+  # Error rate threshold
+  - errorRate: 1  # Error rate should be under 1%

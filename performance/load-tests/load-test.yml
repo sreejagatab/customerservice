@@ -1,0 +1,307 @@
+# Load Test Configuration
+# Tests normal expected load with realistic user scenarios
+
+config:
+  target: 'http://localhost:3000'
+  phases:
+    # Warm-up phase
+    - duration: 300  # 5 minutes
+      arrivalRate: 5
+      rampTo: 25
+      name: "Warm-up phase"
+    
+    # Normal load phase
+    - duration: 1200  # 20 minutes
+      arrivalRate: 25
+      name: "Normal load test"
+    
+    # Peak load phase
+    - duration: 600  # 10 minutes
+      arrivalRate: 25
+      rampTo: 50
+      name: "Peak load test"
+    
+    # Cool-down phase
+    - duration: 300  # 5 minutes
+      arrivalRate: 50
+      rampTo: 5
+      name: "Cool-down phase"
+
+  timeout: 45
+  pool: 25
+  
+  variables:
+    testUserId: "load-user-{{ $randomString() }}"
+    testOrgId: "load-org-{{ $randomString() }}"
+    testEmail: "load-{{ $randomString() }}@example.com"
+  
+  processor: "./load-test-processor.js"
+
+scenarios:
+  - name: "Realistic User Journey"
+    weight: 35
+    flow:
+      # User authentication
+      - post:
+          url: "/api/auth/login"
+          name: "User Login"
+          json:
+            email: "user{{ $randomInt(1, 100) }}@example.com"
+            password: "UserPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "userToken"
+          expect:
+            - statusCode: 200
+
+      # Dashboard access
+      - get:
+          url: "/api/analytics/dashboard"
+          name: "Load Dashboard"
+          headers:
+            Authorization: "Bearer {{ userToken }}"
+          expect:
+            - statusCode: 200
+
+      # Message management
+      - get:
+          url: "/api/messages"
+          name: "List Messages"
+          headers:
+            Authorization: "Bearer {{ userToken }}"
+          qs:
+            page: "{{ $randomInt(1, 5) }}"
+            limit: 20
+          expect:
+            - statusCode: 200
+
+      # Create new message
+      - post:
+          url: "/api/messages"
+          name: "Create Message"
+          headers:
+            Authorization: "Bearer {{ userToken }}"
+          json:
+            subject: "Load Test Message {{ $randomString() }}"
+            content: "This is a realistic load test message with some content"
+            from: "{{ testEmail }}"
+            to: "support@example.com"
+            type: "email"
+          capture:
+            - json: "$.data.id"
+              as: "newMessageId"
+
+      # View message details
+      - get:
+          url: "/api/messages/{{ newMessageId }}"
+          name: "View Message"
+          headers:
+            Authorization: "Bearer {{ userToken }}"
+          expect:
+            - statusCode: 200
+
+  - name: "AI Processing Workflow"
+    weight: 25
+    flow:
+      - post:
+          url: "/api/auth/login"
+          name: "AI User Login"
+          json:
+            email: "aiuser{{ $randomInt(1, 50) }}@example.com"
+            password: "AIUserPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "aiToken"
+
+      # Message classification
+      - post:
+          url: "/api/ai/classify"
+          name: "Classify Message"
+          headers:
+            Authorization: "Bearer {{ aiToken }}"
+          json:
+            content: "{{ $randomString() }} I need help with my order. It's urgent!"
+            metadata:
+              source: "email"
+              customerTier: "{{ $randomString() }}"
+          expect:
+            - statusCode: 200
+
+      # Generate response
+      - post:
+          url: "/api/ai/generate-response"
+          name: "Generate Response"
+          headers:
+            Authorization: "Bearer {{ aiToken }}"
+          json:
+            message: "Customer inquiry about order status"
+            context:
+              urgency: "{{ $randomString() }}"
+              previousInteractions: "{{ $randomInt(0, 10) }}"
+            tone: "professional"
+          expect:
+            - statusCode: 200
+
+      # Sentiment analysis
+      - post:
+          url: "/api/ai/analyze-sentiment"
+          name: "Analyze Sentiment"
+          headers:
+            Authorization: "Bearer {{ aiToken }}"
+          json:
+            text: "I'm really frustrated with this service. Nothing works!"
+          expect:
+            - statusCode: 200
+
+  - name: "Integration Management"
+    weight: 20
+    flow:
+      - post:
+          url: "/api/auth/login"
+          name: "Integration Login"
+          json:
+            email: "admin@example.com"
+            password: "AdminPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "integrationToken"
+
+      # List integrations
+      - get:
+          url: "/api/integrations"
+          name: "List Integrations"
+          headers:
+            Authorization: "Bearer {{ integrationToken }}"
+          expect:
+            - statusCode: 200
+
+      # Check integration status
+      - get:
+          url: "/api/integrations/status"
+          name: "Integration Status"
+          headers:
+            Authorization: "Bearer {{ integrationToken }}"
+          expect:
+            - statusCode: 200
+
+      # Sync messages
+      - post:
+          url: "/api/integrations/gmail/sync"
+          name: "Gmail Sync"
+          headers:
+            Authorization: "Bearer {{ integrationToken }}"
+          json:
+            fullSync: false
+            maxMessages: 50
+          expect:
+            - statusCode: 200
+
+      # Process webhook
+      - post:
+          url: "/api/integrations/webhook"
+          name: "Process Webhook"
+          headers:
+            Authorization: "Bearer {{ integrationToken }}"
+          json:
+            source: "gmail"
+            event: "message_received"
+            data:
+              messageId: "webhook-{{ $randomString() }}"
+              subject: "Webhook Test {{ $randomString() }}"
+          expect:
+            - statusCode: 200
+
+  - name: "Analytics and Reporting"
+    weight: 15
+    flow:
+      - post:
+          url: "/api/auth/login"
+          name: "Analytics Login"
+          json:
+            email: "analyst{{ $randomInt(1, 20) }}@example.com"
+            password: "AnalystPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "analyticsToken"
+
+      # Dashboard metrics
+      - get:
+          url: "/api/analytics/metrics"
+          name: "Load Metrics"
+          headers:
+            Authorization: "Bearer {{ analyticsToken }}"
+          qs:
+            timeRange: "7d"
+            includeBreakdown: "true"
+          expect:
+            - statusCode: 200
+
+      # Performance report
+      - get:
+          url: "/api/reports/performance"
+          name: "Performance Report"
+          headers:
+            Authorization: "Bearer {{ analyticsToken }}"
+          qs:
+            startDate: "2024-01-01"
+            endDate: "2024-12-31"
+            format: "json"
+          expect:
+            - statusCode: 200
+
+      # Usage statistics
+      - get:
+          url: "/api/analytics/usage"
+          name: "Usage Statistics"
+          headers:
+            Authorization: "Bearer {{ analyticsToken }}"
+          qs:
+            period: "monthly"
+            breakdown: "by-user"
+          expect:
+            - statusCode: 200
+
+  - name: "File Operations"
+    weight: 5
+    flow:
+      - post:
+          url: "/api/auth/login"
+          name: "File User Login"
+          json:
+            email: "fileuser{{ $randomInt(1, 30) }}@example.com"
+            password: "FileUserPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "fileToken"
+
+      # List files
+      - get:
+          url: "/api/files"
+          name: "List Files"
+          headers:
+            Authorization: "Bearer {{ fileToken }}"
+          qs:
+            page: 1
+            limit: 20
+          expect:
+            - statusCode: 200
+
+      # File upload simulation (without actual file)
+      - post:
+          url: "/api/files/upload"
+          name: "Simulate File Upload"
+          headers:
+            Authorization: "Bearer {{ fileToken }}"
+          json:
+            filename: "test-file-{{ $randomString() }}.txt"
+            size: "{{ $randomInt(1000, 100000) }}"
+            type: "text/plain"
+          expect:
+            - statusCode: 201
+
+# Load test expectations
+expect:
+  - p95: 800    # 95th percentile under 800ms
+  - p99: 2000   # 99th percentile under 2 seconds
+  - median: 300 # Median under 300ms
+  - errorRate: 2 # Error rate under 2%

@@ -15,6 +15,89 @@ process.env.GOOGLE_REDIRECT_URI = 'http://localhost:3003/auth/google/callback';
 process.env.MICROSOFT_REDIRECT_URI = 'http://localhost:3003/auth/microsoft/callback';
 process.env.WEBHOOK_BASE_URL = 'http://localhost:3003/webhooks';
 
+// Mock Database Service for integration tests
+jest.mock('../src/services/database', () => ({
+  DatabaseService: {
+    getInstance: jest.fn().mockReturnValue({
+      query: jest.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+      transaction: jest.fn().mockImplementation(async (callback) => {
+        const mockClient = {
+          query: jest.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+          release: jest.fn(),
+        };
+        return await callback(mockClient);
+      }),
+      healthCheck: jest.fn().mockResolvedValue(true),
+      getStats: jest.fn().mockReturnValue({
+        totalConnections: 1,
+        idleConnections: 0,
+        waitingCount: 0,
+      }),
+    }),
+    initialize: jest.fn().mockResolvedValue(undefined),
+    close: jest.fn().mockResolvedValue(undefined),
+  },
+  integrationRepo: {
+    getIntegration: jest.fn().mockResolvedValue({
+      rows: [{
+        id: 'test-integration-id',
+        organization_id: 'test-org-id',
+        name: 'Test Integration',
+        type: 'email',
+        provider: 'gmail',
+        config: { autoSync: true },
+        credentials: { accessToken: 'mock-token' },
+        status: 'active',
+        created_at: new Date(),
+        updated_at: new Date(),
+      }],
+      rowCount: 1,
+    }),
+    createIntegration: jest.fn().mockResolvedValue({
+      rows: [{
+        id: 'new-integration-id',
+        organization_id: 'test-org-id',
+        name: 'New Integration',
+        type: 'email',
+        provider: 'gmail',
+        config: {},
+        credentials: {},
+        status: 'active',
+        created_at: new Date(),
+        updated_at: new Date(),
+      }],
+      rowCount: 1,
+    }),
+    updateIntegration: jest.fn().mockResolvedValue({
+      rows: [{
+        id: 'test-integration-id',
+        organization_id: 'test-org-id',
+        name: 'Updated Integration',
+        type: 'email',
+        provider: 'gmail',
+        config: { autoSync: false },
+        credentials: { accessToken: 'updated-token' },
+        status: 'active',
+        created_at: new Date(),
+        updated_at: new Date(),
+      }],
+      rowCount: 1,
+    }),
+    deleteIntegration: jest.fn().mockResolvedValue({
+      rows: [],
+      rowCount: 1,
+    }),
+    listIntegrations: jest.fn().mockResolvedValue({
+      rows: [],
+      rowCount: 0,
+    }),
+    logSyncEvent: jest.fn().mockResolvedValue({
+      rows: [],
+      rowCount: 1,
+    }),
+  },
+}));
+
 // Mock Google Auth Library
 jest.mock('google-auth-library', () => ({
   OAuth2Client: jest.fn().mockImplementation(() => ({
@@ -31,6 +114,88 @@ jest.mock('google-auth-library', () => ({
     }),
     generateAuthUrl: jest.fn().mockReturnValue('https://mock-auth-url.com'),
   })),
+}));
+
+// Mock Axios for Outlook connector
+const mockAxiosInstance = {
+  get: jest.fn().mockResolvedValue({
+    data: {
+      id: 'test-user-id',
+      mail: 'test@example.com',
+      userPrincipalName: 'test@example.com',
+      displayName: 'Test User',
+      value: [
+        {
+          id: 'msg1',
+          subject: 'Test Subject',
+          from: {
+            emailAddress: {
+              address: 'sender@example.com',
+              name: 'Test Sender',
+            },
+          },
+          toRecipients: [
+            {
+              emailAddress: {
+                address: 'recipient@example.com',
+                name: 'Test Recipient',
+              },
+            },
+          ],
+          body: {
+            content: 'Test message content',
+            contentType: 'text',
+          },
+          receivedDateTime: new Date().toISOString(),
+          isRead: false,
+        },
+      ],
+    },
+  }),
+  post: jest.fn().mockResolvedValue({
+    data: {
+      id: 'sent-msg-id',
+      subject: 'Test Subject',
+    },
+  }),
+  patch: jest.fn().mockResolvedValue({
+    data: {
+      id: 'msg1',
+      isRead: true,
+    },
+  }),
+  delete: jest.fn().mockResolvedValue({
+    data: {},
+  }),
+  interceptors: {
+    request: {
+      use: jest.fn(),
+    },
+    response: {
+      use: jest.fn(),
+    },
+  },
+};
+
+jest.mock('axios', () => ({
+  create: jest.fn(() => mockAxiosInstance),
+  post: jest.fn().mockResolvedValue({
+    data: {
+      access_token: 'mock-access-token',
+      refresh_token: 'mock-refresh-token',
+      expires_in: 3600,
+    },
+  }),
+  default: {
+    create: jest.fn(() => mockAxiosInstance),
+    post: jest.fn().mockResolvedValue({
+      data: {
+        access_token: 'mock-access-token',
+        refresh_token: 'mock-refresh-token',
+        expires_in: 3600,
+      },
+    }),
+  },
 }));
 
 // Mock external services in test environment

@@ -1,0 +1,241 @@
+# Stress Test Configuration
+# Tests system behavior under high load to identify breaking points
+
+config:
+  target: 'http://localhost:3000'
+  phases:
+    # Ramp up phase
+    - duration: 300  # 5 minutes
+      arrivalRate: 10
+      rampTo: 50
+      name: "Ramp up to 50 users/sec"
+    
+    # High load phase
+    - duration: 600  # 10 minutes
+      arrivalRate: 50
+      name: "Sustained high load"
+    
+    # Peak stress phase
+    - duration: 300  # 5 minutes
+      arrivalRate: 50
+      rampTo: 100
+      name: "Peak stress test"
+    
+    # Recovery phase
+    - duration: 300  # 5 minutes
+      arrivalRate: 100
+      rampTo: 10
+      name: "Recovery phase"
+
+  # Increased timeouts for stress testing
+  timeout: 60
+  
+  # Connection pooling
+  pool: 50
+  
+  # Variables for dynamic data
+  variables:
+    testUserId: "stress-user-{{ $randomString() }}"
+    testOrgId: "stress-org-{{ $randomString() }}"
+    testEmail: "stress-{{ $randomString() }}@example.com"
+  
+  # Custom processor for stress test metrics
+  processor: "./stress-test-processor.js"
+
+# Stress test scenarios with higher weights on critical paths
+scenarios:
+  - name: "Critical Path - Message Processing"
+    weight: 40
+    flow:
+      - post:
+          url: "/api/auth/login"
+          name: "Login"
+          json:
+            email: "admin@example.com"
+            password: "AdminPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "token"
+          expect:
+            - statusCode: 200
+
+      - post:
+          url: "/api/messages"
+          name: "Create Message"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          json:
+            subject: "Stress Test Message {{ $randomString() }}"
+            content: "This is a stress test message with content {{ $randomString() }}"
+            from: "{{ testEmail }}"
+            to: "support@example.com"
+            type: "email"
+            priority: "{{ $randomInt(1, 5) }}"
+          capture:
+            - json: "$.data.id"
+              as: "messageId"
+
+      - post:
+          url: "/api/ai/classify"
+          name: "AI Classification"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          json:
+            content: "{{ $randomString() }} urgent help needed with order"
+            messageId: "{{ messageId }}"
+
+      - post:
+          url: "/api/ai/generate-response"
+          name: "AI Response Generation"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          json:
+            messageId: "{{ messageId }}"
+            context:
+              urgency: "high"
+              customerTier: "premium"
+
+  - name: "High Volume Authentication"
+    weight: 25
+    flow:
+      - post:
+          url: "/api/auth/register"
+          name: "User Registration"
+          json:
+            email: "{{ testEmail }}"
+            password: "StressTest123!"
+            name: "Stress Test User {{ $randomString() }}"
+            organizationName: "Stress Test Org {{ $randomString() }}"
+
+      - post:
+          url: "/api/auth/login"
+          name: "User Login"
+          json:
+            email: "{{ testEmail }}"
+            password: "StressTest123!"
+          capture:
+            - json: "$.data.token"
+              as: "userToken"
+
+      - get:
+          url: "/api/auth/profile"
+          name: "Profile Access"
+          headers:
+            Authorization: "Bearer {{ userToken }}"
+
+      - post:
+          url: "/api/auth/refresh"
+          name: "Token Refresh"
+          headers:
+            Authorization: "Bearer {{ userToken }}"
+
+  - name: "Database Intensive Operations"
+    weight: 20
+    flow:
+      - post:
+          url: "/api/auth/login"
+          name: "Login for DB Ops"
+          json:
+            email: "admin@example.com"
+            password: "AdminPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "dbToken"
+
+      - get:
+          url: "/api/messages"
+          name: "List Messages with Search"
+          headers:
+            Authorization: "Bearer {{ dbToken }}"
+          qs:
+            search: "{{ $randomString() }}"
+            page: "{{ $randomInt(1, 10) }}"
+            limit: 50
+            sortBy: "createdAt"
+            sortOrder: "desc"
+
+      - get:
+          url: "/api/analytics/dashboard"
+          name: "Analytics Dashboard"
+          headers:
+            Authorization: "Bearer {{ dbToken }}"
+          qs:
+            dateRange: "7d"
+            includeMetrics: "true"
+
+      - get:
+          url: "/api/reports/performance"
+          name: "Performance Report"
+          headers:
+            Authorization: "Bearer {{ dbToken }}"
+          qs:
+            startDate: "2024-01-01"
+            endDate: "2024-12-31"
+            format: "json"
+
+  - name: "Integration Sync Stress"
+    weight: 15
+    flow:
+      - post:
+          url: "/api/auth/login"
+          name: "Login for Sync"
+          json:
+            email: "admin@example.com"
+            password: "AdminPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "syncToken"
+
+      - post:
+          url: "/api/integrations/gmail/sync"
+          name: "Gmail Sync"
+          headers:
+            Authorization: "Bearer {{ syncToken }}"
+          json:
+            fullSync: false
+            maxMessages: 100
+
+      - get:
+          url: "/api/integrations/status"
+          name: "Integration Status"
+          headers:
+            Authorization: "Bearer {{ syncToken }}"
+
+      - post:
+          url: "/api/integrations/webhook"
+          name: "Webhook Processing"
+          headers:
+            Authorization: "Bearer {{ syncToken }}"
+          json:
+            source: "gmail"
+            event: "message_received"
+            data:
+              messageId: "{{ $randomString() }}"
+              subject: "Webhook Test {{ $randomString() }}"
+
+# Stress test specific expectations (more lenient)
+expect:
+  # Response time thresholds for stress test
+  - p95: 2000   # 95th percentile under 2 seconds
+  - p99: 5000   # 99th percentile under 5 seconds
+  - median: 1000 # Median under 1 second
+  
+  # Higher error rate tolerance during stress
+  - errorRate: 5  # Up to 5% error rate acceptable during peak stress
+
+# Stress test specific configuration
+environments:
+  stress:
+    target: 'http://localhost:3000'
+    phases:
+      - duration: 60
+        arrivalRate: 1
+        rampTo: 200  # Extreme stress - 200 users/sec
+        name: "Extreme stress test"
+    
+    # Reduced timeouts to fail fast under extreme stress
+    timeout: 30
+    
+    expect:
+      - p95: 5000
+      - errorRate: 10  # Up to 10% error rate under extreme stress

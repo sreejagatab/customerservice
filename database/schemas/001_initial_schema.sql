@@ -6,11 +6,11 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- Create custom types
-CREATE TYPE subscription_plan AS ENUM ('starter', 'professional', 'enterprise', 'enterprise_plus');
-CREATE TYPE user_role AS ENUM ('super_admin', 'admin', 'manager', 'agent', 'viewer');
-CREATE TYPE status AS ENUM ('active', 'inactive', 'pending', 'suspended', 'deleted');
+CREATE TYPE subscription_plan AS ENUM ('starter', 'professional', 'enterprise', 'enterprise_plus', 'white_label', 'custom');
+CREATE TYPE user_role AS ENUM ('super_admin', 'admin', 'manager', 'agent', 'viewer', 'partner_admin', 'partner_user');
+CREATE TYPE status AS ENUM ('active', 'inactive', 'pending', 'suspended', 'deleted', 'trial', 'expired');
 CREATE TYPE priority AS ENUM ('low', 'normal', 'high', 'urgent', 'critical');
-CREATE TYPE integration_type AS ENUM ('email', 'chat', 'sms', 'social', 'ecommerce', 'crm', 'helpdesk', 'custom');
+CREATE TYPE integration_type AS ENUM ('email', 'chat', 'sms', 'social', 'ecommerce', 'crm', 'helpdesk', 'voice', 'custom');
 CREATE TYPE integration_status AS ENUM ('active', 'inactive', 'error', 'configuring', 'testing');
 CREATE TYPE sync_status AS ENUM ('idle', 'syncing', 'success', 'error', 'partial');
 CREATE TYPE conversation_status AS ENUM ('open', 'in_progress', 'waiting_for_customer', 'waiting_for_agent', 'resolved', 'closed', 'spam');
@@ -19,17 +19,34 @@ CREATE TYPE message_status AS ENUM ('received', 'processing', 'processed', 'sent
 CREATE TYPE workflow_status AS ENUM ('draft', 'active', 'inactive', 'archived');
 CREATE TYPE execution_status AS ENUM ('queued', 'running', 'completed', 'failed', 'cancelled', 'timeout', 'paused');
 CREATE TYPE ai_provider AS ENUM ('openai', 'anthropic', 'google', 'azure_openai', 'cohere', 'hugging_face', 'custom');
+CREATE TYPE tenant_type AS ENUM ('direct', 'partner', 'white_label', 'enterprise');
+CREATE TYPE partner_status AS ENUM ('pending', 'active', 'suspended', 'terminated');
+CREATE TYPE billing_status AS ENUM ('active', 'past_due', 'canceled', 'unpaid', 'trialing');
 
--- Organizations table
+-- Organizations table (Enhanced for Multi-Tenancy)
 CREATE TABLE organizations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     slug VARCHAR(255) UNIQUE NOT NULL,
     plan subscription_plan DEFAULT 'starter',
     status status DEFAULT 'active',
+    tenant_type tenant_type DEFAULT 'direct',
+    parent_organization_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
+    partner_id UUID,
     settings JSONB NOT NULL DEFAULT '{}',
     limits JSONB NOT NULL DEFAULT '{}',
     billing_info JSONB DEFAULT NULL,
+    branding JSONB DEFAULT '{}',
+    custom_domain VARCHAR(255),
+    ssl_certificate JSONB DEFAULT NULL,
+    region VARCHAR(50) DEFAULT 'us-east-1',
+    data_residency_requirements JSONB DEFAULT '{}',
+    compliance_settings JSONB DEFAULT '{}',
+    resource_quotas JSONB DEFAULT '{}',
+    usage_metrics JSONB DEFAULT '{}',
+    trial_ends_at TIMESTAMP WITH TIME ZONE,
+    subscription_id VARCHAR(255),
+    billing_status billing_status DEFAULT 'active',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -38,7 +55,83 @@ CREATE TABLE organizations (
 CREATE INDEX idx_organizations_slug ON organizations(slug);
 CREATE INDEX idx_organizations_plan ON organizations(plan);
 CREATE INDEX idx_organizations_status ON organizations(status);
+CREATE INDEX idx_organizations_tenant_type ON organizations(tenant_type);
+CREATE INDEX idx_organizations_parent_organization_id ON organizations(parent_organization_id);
+CREATE INDEX idx_organizations_partner_id ON organizations(partner_id);
+CREATE INDEX idx_organizations_custom_domain ON organizations(custom_domain);
+CREATE INDEX idx_organizations_region ON organizations(region);
+CREATE INDEX idx_organizations_billing_status ON organizations(billing_status);
 CREATE INDEX idx_organizations_created_at ON organizations(created_at);
+
+-- Partners table (for white-label and reseller partners)
+CREATE TABLE partners (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) UNIQUE NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    contact_person VARCHAR(255) NOT NULL,
+    phone VARCHAR(50),
+    address JSONB DEFAULT '{}',
+    status partner_status DEFAULT 'pending',
+    partner_type VARCHAR(50) DEFAULT 'reseller', -- 'reseller', 'white_label', 'integration'
+    commission_rate DECIMAL(5,4) DEFAULT 0.20, -- 20% default commission
+    revenue_share_model JSONB DEFAULT '{}',
+    branding_settings JSONB DEFAULT '{}',
+    api_access_level VARCHAR(50) DEFAULT 'standard',
+    allowed_features TEXT[] DEFAULT '{}',
+    resource_limits JSONB DEFAULT '{}',
+    contract_details JSONB DEFAULT '{}',
+    onboarding_completed BOOLEAN DEFAULT FALSE,
+    certification_level VARCHAR(50),
+    support_tier VARCHAR(50) DEFAULT 'standard',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create indexes for partners
+CREATE INDEX idx_partners_slug ON partners(slug);
+CREATE INDEX idx_partners_status ON partners(status);
+CREATE INDEX idx_partners_partner_type ON partners(partner_type);
+CREATE INDEX idx_partners_created_at ON partners(created_at);
+
+-- Partner Organizations relationship
+CREATE TABLE partner_organizations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    partner_id UUID NOT NULL REFERENCES partners(id) ON DELETE CASCADE,
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    relationship_type VARCHAR(50) DEFAULT 'managed', -- 'managed', 'referred', 'white_label'
+    commission_override DECIMAL(5,4),
+    custom_pricing JSONB DEFAULT '{}',
+    support_level VARCHAR(50) DEFAULT 'standard',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(partner_id, organization_id)
+);
+
+-- Create indexes for partner_organizations
+CREATE INDEX idx_partner_organizations_partner_id ON partner_organizations(partner_id);
+CREATE INDEX idx_partner_organizations_organization_id ON partner_organizations(organization_id);
+CREATE INDEX idx_partner_organizations_relationship_type ON partner_organizations(relationship_type);
+
+-- Tenant Isolation Settings
+CREATE TABLE tenant_isolation (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    database_isolation_level VARCHAR(50) DEFAULT 'shared', -- 'shared', 'schema', 'database'
+    storage_isolation BOOLEAN DEFAULT FALSE,
+    network_isolation BOOLEAN DEFAULT FALSE,
+    compute_isolation BOOLEAN DEFAULT FALSE,
+    encryption_key_id VARCHAR(255),
+    backup_isolation BOOLEAN DEFAULT FALSE,
+    audit_isolation BOOLEAN DEFAULT FALSE,
+    settings JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(organization_id)
+);
+
+-- Create indexes for tenant_isolation
+CREATE INDEX idx_tenant_isolation_organization_id ON tenant_isolation(organization_id);
+CREATE INDEX idx_tenant_isolation_database_isolation_level ON tenant_isolation(database_isolation_level);
 
 -- Users table
 CREATE TABLE users (

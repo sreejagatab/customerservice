@@ -1,0 +1,288 @@
+# Prometheus Alert Rules for Universal AI Customer Service Platform
+# Comprehensive alerting for system health, performance, and business metrics
+
+groups:
+  # Critical System Alerts
+  - name: critical_system_alerts
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: devops
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "Service {{ $labels.job }} on instance {{ $labels.instance }} has been down for more than 1 minute."
+          runbook_url: "https://runbooks.universalai-cs.com/service-down"
+
+      - alert: HighErrorRate
+        expr: (rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])) * 100 > 5
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }}% for service {{ $labels.job }}"
+          runbook_url: "https://runbooks.universalai-cs.com/high-error-rate"
+
+      - alert: DatabaseConnectionFailure
+        expr: postgres_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Database connection failure"
+          description: "PostgreSQL database is not responding"
+          runbook_url: "https://runbooks.universalai-cs.com/database-down"
+
+      - alert: RedisConnectionFailure
+        expr: redis_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          team: infrastructure
+        annotations:
+          summary: "Redis connection failure"
+          description: "Redis cache is not responding"
+          runbook_url: "https://runbooks.universalai-cs.com/redis-down"
+
+  # Performance Alerts
+  - name: performance_alerts
+    rules:
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "High response time detected"
+          description: "95th percentile response time is {{ $value }}s for {{ $labels.job }}"
+          runbook_url: "https://runbooks.universalai-cs.com/high-response-time"
+
+      - alert: HighCPUUsage
+        expr: (100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 80
+        for: 5m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
+          runbook_url: "https://runbooks.universalai-cs.com/high-cpu"
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value }}% on {{ $labels.instance }}"
+          runbook_url: "https://runbooks.universalai-cs.com/high-memory"
+
+      - alert: DiskSpaceRunningOut
+        expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "Disk space running out"
+          description: "Disk usage is {{ $value }}% on {{ $labels.instance }}"
+          runbook_url: "https://runbooks.universalai-cs.com/disk-space"
+
+  # Application-Specific Alerts
+  - name: application_alerts
+    rules:
+      - alert: AIServiceHighLatency
+        expr: histogram_quantile(0.95, rate(ai_processing_duration_seconds_bucket[5m])) > 10
+        for: 3m
+        labels:
+          severity: warning
+          team: ai
+        annotations:
+          summary: "AI service high latency"
+          description: "AI processing latency is {{ $value }}s (95th percentile)"
+          runbook_url: "https://runbooks.universalai-cs.com/ai-latency"
+
+      - alert: IntegrationSyncFailure
+        expr: increase(integration_sync_failures_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+          team: integrations
+        annotations:
+          summary: "Integration sync failures"
+          description: "{{ $value }} integration sync failures in the last 5 minutes"
+          runbook_url: "https://runbooks.universalai-cs.com/sync-failures"
+
+      - alert: AuthenticationFailureSpike
+        expr: increase(auth_failures_total[5m]) > 50
+        for: 2m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Authentication failure spike"
+          description: "{{ $value }} authentication failures in the last 5 minutes"
+          runbook_url: "https://runbooks.universalai-cs.com/auth-failures"
+
+      - alert: MessageProcessingBacklog
+        expr: message_queue_size > 1000
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Message processing backlog"
+          description: "Message queue has {{ $value }} pending messages"
+          runbook_url: "https://runbooks.universalai-cs.com/message-backlog"
+
+  # Database Alerts
+  - name: database_alerts
+    rules:
+      - alert: DatabaseSlowQueries
+        expr: rate(postgres_slow_queries_total[5m]) > 10
+        for: 3m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Database slow queries detected"
+          description: "{{ $value }} slow queries per second"
+          runbook_url: "https://runbooks.universalai-cs.com/slow-queries"
+
+      - alert: DatabaseConnectionPoolExhaustion
+        expr: postgres_connections_active / postgres_connections_max > 0.9
+        for: 2m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Database connection pool exhaustion"
+          description: "Database connection pool is {{ $value }}% full"
+          runbook_url: "https://runbooks.universalai-cs.com/connection-pool"
+
+      - alert: DatabaseReplicationLag
+        expr: postgres_replication_lag_seconds > 60
+        for: 2m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Database replication lag"
+          description: "Replication lag is {{ $value }} seconds"
+          runbook_url: "https://runbooks.universalai-cs.com/replication-lag"
+
+  # Business Logic Alerts
+  - name: business_alerts
+    rules:
+      - alert: LowMessageProcessingRate
+        expr: rate(messages_processed_total[10m]) < 10
+        for: 5m
+        labels:
+          severity: warning
+          team: product
+        annotations:
+          summary: "Low message processing rate"
+          description: "Only {{ $value }} messages processed per second"
+          runbook_url: "https://runbooks.universalai-cs.com/low-processing-rate"
+
+      - alert: HighAIAPIErrorRate
+        expr: (rate(ai_api_errors_total[5m]) / rate(ai_api_requests_total[5m])) * 100 > 10
+        for: 3m
+        labels:
+          severity: warning
+          team: ai
+        annotations:
+          summary: "High AI API error rate"
+          description: "AI API error rate is {{ $value }}%"
+          runbook_url: "https://runbooks.universalai-cs.com/ai-api-errors"
+
+      - alert: UserSessionAnomalies
+        expr: abs(rate(user_sessions_total[1h]) - rate(user_sessions_total[1h] offset 24h)) / rate(user_sessions_total[1h] offset 24h) > 0.5
+        for: 10m
+        labels:
+          severity: info
+          team: product
+        annotations:
+          summary: "User session anomalies detected"
+          description: "User sessions differ by {{ $value }}% from same time yesterday"
+          runbook_url: "https://runbooks.universalai-cs.com/session-anomalies"
+
+  # Security Alerts
+  - name: security_alerts
+    rules:
+      - alert: SuspiciousLoginActivity
+        expr: increase(suspicious_login_attempts_total[5m]) > 20
+        for: 1m
+        labels:
+          severity: critical
+          team: security
+        annotations:
+          summary: "Suspicious login activity detected"
+          description: "{{ $value }} suspicious login attempts in the last 5 minutes"
+          runbook_url: "https://runbooks.universalai-cs.com/suspicious-logins"
+
+      - alert: RateLimitExceeded
+        expr: increase(rate_limit_exceeded_total[5m]) > 100
+        for: 2m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Rate limit exceeded frequently"
+          description: "{{ $value }} rate limit violations in the last 5 minutes"
+          runbook_url: "https://runbooks.universalai-cs.com/rate-limit-exceeded"
+
+      - alert: UnauthorizedAPIAccess
+        expr: increase(unauthorized_api_access_total[5m]) > 10
+        for: 1m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Unauthorized API access attempts"
+          description: "{{ $value }} unauthorized API access attempts"
+          runbook_url: "https://runbooks.universalai-cs.com/unauthorized-access"
+
+  # Infrastructure Alerts
+  - name: infrastructure_alerts
+    rules:
+      - alert: ContainerRestartLoop
+        expr: increase(container_restarts_total[10m]) > 3
+        for: 2m
+        labels:
+          severity: warning
+          team: devops
+        annotations:
+          summary: "Container restart loop detected"
+          description: "Container {{ $labels.container }} has restarted {{ $value }} times"
+          runbook_url: "https://runbooks.universalai-cs.com/container-restarts"
+
+      - alert: LoadBalancerUnhealthy
+        expr: haproxy_backend_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: infrastructure
+        annotations:
+          summary: "Load balancer backend unhealthy"
+          description: "Load balancer backend {{ $labels.backend }} is down"
+          runbook_url: "https://runbooks.universalai-cs.com/lb-backend-down"
+
+      - alert: SSLCertificateExpiring
+        expr: (ssl_certificate_expiry_seconds - time()) / 86400 < 30
+        for: 1h
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "SSL certificate expiring soon"
+          description: "SSL certificate for {{ $labels.instance }} expires in {{ $value }} days"
+          runbook_url: "https://runbooks.universalai-cs.com/ssl-expiry"

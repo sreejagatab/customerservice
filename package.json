@@ -55,11 +55,12 @@
     "deps:check:workspaces": "npm workspaces exec npm outdated"
   },
   "devDependencies": {
+    "@playwright/test": "^1.40.0",
     "@types/jest": "^29.5.8",
     "@types/node": "^20.10.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
-    "@playwright/test": "^1.40.0",
+    "artillery": "^2.0.23",
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
     "eslint": "^8.54.0",

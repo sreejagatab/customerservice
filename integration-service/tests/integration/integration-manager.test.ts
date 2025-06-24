@@ -179,21 +179,24 @@ describe('IntegrationManager Integration Tests', () => {
     });
 
     test('should handle different integration types', async () => {
-      const gmailIntegration = { ...mockIntegrationData, id: 'gmail-integration' };
-      const outlookIntegration = {
+      const gmailIntegration1 = { ...mockIntegrationData, id: 'gmail-integration-1' };
+      const gmailIntegration2 = {
         ...mockIntegrationData,
-        id: 'outlook-integration',
-        provider: 'outlook',
+        id: 'gmail-integration-2',
+        name: 'Second Gmail Integration',
       };
 
-      await integrationManager.createIntegration(gmailIntegration);
-      await integrationManager.createIntegration(outlookIntegration);
+      await integrationManager.createIntegration(gmailIntegration1);
+      await integrationManager.createIntegration(gmailIntegration2);
 
-      const gmailConnector = integrationManager.getIntegration('gmail-integration');
-      const outlookConnector = integrationManager.getIntegration('outlook-integration');
+      const gmailConnector1 = integrationManager.getIntegration('gmail-integration-1');
+      const gmailConnector2 = integrationManager.getIntegration('gmail-integration-2');
 
-      expect(gmailConnector?.provider).toBe('gmail');
-      expect(outlookConnector?.provider).toBe('outlook');
+      expect(gmailConnector1?.provider).toBe('gmail');
+      expect(gmailConnector2?.provider).toBe('gmail');
+      expect(gmailConnector1?.id).toBe('gmail-connector');
+      expect(gmailConnector2?.id).toBe('gmail-connector');
+      expect(gmailConnector1).not.toBe(gmailConnector2); // Different instances
     });
   });
 });

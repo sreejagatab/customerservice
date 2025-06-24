@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: universal-ai-cs
+  labels:
+    name: universal-ai-cs
+    environment: production
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: universal-ai-cs-quota
+  namespace: universal-ai-cs
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: 20Gi
+    limits.cpu: "20"
+    limits.memory: 40Gi
+    persistentvolumeclaims: "10"
+    services: "20"
+    secrets: "20"
+    configmaps: "20"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: universal-ai-cs-limits
+  namespace: universal-ai-cs
+spec:
+  limits:
+  - default:
+      cpu: "1"
+      memory: "1Gi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+    type: Container

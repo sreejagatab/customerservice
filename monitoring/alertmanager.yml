@@ -1,0 +1,240 @@
+# Alertmanager Configuration for Universal AI Customer Service Platform
+# Comprehensive alert routing, grouping, and notification setup
+
+global:
+  # SMTP configuration for email alerts
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'alerts@universalai-cs.com'
+  smtp_auth_username: 'alerts@universalai-cs.com'
+  smtp_auth_password: 'your-app-password'
+  smtp_require_tls: true
+
+  # Slack configuration
+  slack_api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+
+  # PagerDuty configuration
+  pagerduty_url: 'https://events.pagerduty.com/v2/enqueue'
+
+# Templates for notifications
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Route configuration
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'default-receiver'
+  
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 0s
+      group_interval: 5s
+      repeat_interval: 15m
+      routes:
+        # Database issues - immediate PagerDuty
+        - match:
+            team: database
+          receiver: 'database-critical'
+          group_wait: 0s
+          repeat_interval: 5m
+        
+        # Security issues - immediate security team notification
+        - match:
+            team: security
+          receiver: 'security-critical'
+          group_wait: 0s
+          repeat_interval: 10m
+
+    # Warning alerts - standard notification
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 2h
+
+    # Info alerts - low priority notification
+    - match:
+        severity: info
+      receiver: 'info-alerts'
+      group_wait: 5m
+      group_interval: 30m
+      repeat_interval: 12h
+
+    # Team-specific routing
+    - match:
+        team: devops
+      receiver: 'devops-team'
+      
+    - match:
+        team: backend
+      receiver: 'backend-team'
+      
+    - match:
+        team: ai
+      receiver: 'ai-team'
+
+# Inhibition rules to prevent alert spam
+inhibit_rules:
+  # Inhibit warning alerts if critical alert is firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']
+
+  # Inhibit individual service alerts if general service down alert is firing
+  - source_match:
+      alertname: 'ServiceDown'
+    target_match_re:
+      alertname: '.*'
+    equal: ['instance']
+
+# Receiver configurations
+receivers:
+  # Default receiver
+  - name: 'default-receiver'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#alerts'
+        title: 'Universal AI CS Alert'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Severity:* {{ .Labels.severity }}
+          *Service:* {{ .Labels.job }}
+          {{ end }}
+        color: 'warning'
+
+  # Critical alerts - multiple channels
+  - name: 'critical-alerts'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#critical-alerts'
+        title: '🚨 CRITICAL ALERT - Universal AI CS'
+        text: |
+          {{ range .Alerts }}
+          *CRITICAL ALERT*
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Service:* {{ .Labels.job }}
+          *Instance:* {{ .Labels.instance }}
+          *Runbook:* {{ .Annotations.runbook_url }}
+          {{ end }}
+        color: 'danger'
+        
+    email_configs:
+      - to: 'oncall@universalai-cs.com'
+        subject: '🚨 CRITICAL: {{ .GroupLabels.alertname }} - Universal AI CS'
+        body: |
+          Critical alert fired for Universal AI Customer Service Platform:
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Service: {{ .Labels.job }}
+          Instance: {{ .Labels.instance }}
+          Severity: {{ .Labels.severity }}
+          Runbook: {{ .Annotations.runbook_url }}
+          
+          {{ end }}
+          
+          Please investigate immediately.
+          
+    pagerduty_configs:
+      - routing_key: 'your-pagerduty-integration-key'
+        description: '{{ .GroupLabels.alertname }} - Universal AI CS'
+        details:
+          summary: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+          source: 'Universal AI Customer Service Platform'
+          severity: 'critical'
+
+  # Database critical alerts
+  - name: 'database-critical'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#database-alerts'
+        title: '🔥 DATABASE CRITICAL - Universal AI CS'
+        text: |
+          {{ range .Alerts }}
+          *DATABASE CRITICAL ALERT*
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Runbook:* {{ .Annotations.runbook_url }}
+          {{ end }}
+        color: 'danger'
+        
+    pagerduty_configs:
+      - routing_key: 'database-pagerduty-key'
+        description: 'Database Critical: {{ .GroupLabels.alertname }}'
+
+  # Security critical alerts
+  - name: 'security-critical'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#security-alerts'
+        title: '🛡️ SECURITY ALERT - Universal AI CS'
+        text: |
+          {{ range .Alerts }}
+          *SECURITY ALERT*
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Runbook:* {{ .Annotations.runbook_url }}
+          {{ end }}
+        color: 'danger'
+        
+    email_configs:
+      - to: 'security@universalai-cs.com'
+        subject: '🛡️ SECURITY ALERT: {{ .GroupLabels.alertname }}'
+
+  # Warning alerts
+  - name: 'warning-alerts'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#warnings'
+        title: '⚠️ Warning - Universal AI CS'
+        text: |
+          {{ range .Alerts }}
+          *Warning:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Service:* {{ .Labels.job }}
+          {{ end }}
+        color: 'warning'
+
+  # Info alerts
+  - name: 'info-alerts'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#info'
+        title: 'ℹ️ Info - Universal AI CS'
+        text: |
+          {{ range .Alerts }}
+          *Info:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          {{ end }}
+        color: 'good'
+
+  # Team-specific receivers
+  - name: 'devops-team'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#devops'
+        title: '🔧 DevOps Alert - Universal AI CS'
+
+  - name: 'backend-team'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#backend'
+        title: '⚙️ Backend Alert - Universal AI CS'
+
+  - name: 'ai-team'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#ai-team'
+        title: '🤖 AI Service Alert - Universal AI CS'

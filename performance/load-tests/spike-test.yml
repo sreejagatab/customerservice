@@ -1,0 +1,135 @@
+# Spike Test Configuration
+# Tests system behavior under sudden traffic spikes
+
+config:
+  target: 'http://localhost:3000'
+  phases:
+    # Normal baseline
+    - duration: 120  # 2 minutes
+      arrivalRate: 10
+      name: "Baseline traffic"
+    
+    # Sudden spike
+    - duration: 60   # 1 minute
+      arrivalRate: 100
+      name: "Traffic spike"
+    
+    # Recovery period
+    - duration: 300  # 5 minutes
+      arrivalRate: 100
+      rampTo: 10
+      name: "Recovery monitoring"
+    
+    # Second spike test
+    - duration: 30   # 30 seconds
+      arrivalRate: 150
+      name: "Extreme spike"
+    
+    # Final recovery
+    - duration: 180  # 3 minutes
+      arrivalRate: 150
+      rampTo: 5
+      name: "Final recovery"
+
+  timeout: 30  # Shorter timeout for spike tests
+  pool: 100
+  
+  variables:
+    testUserId: "spike-user-{{ $randomString() }}"
+    testEmail: "spike-{{ $randomString() }}@example.com"
+  
+  processor: "./load-test-processor.js"
+
+scenarios:
+  - name: "Quick Authentication"
+    weight: 40
+    flow:
+      - post:
+          url: "/api/auth/login"
+          name: "Fast Login"
+          json:
+            email: "user{{ $randomInt(1, 200) }}@example.com"
+            password: "UserPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "spikeToken"
+          expect:
+            - statusCode: 200
+
+      - get:
+          url: "/api/auth/profile"
+          name: "Quick Profile"
+          headers:
+            Authorization: "Bearer {{ spikeToken }}"
+          expect:
+            - statusCode: 200
+
+  - name: "Rapid Message Creation"
+    weight: 30
+    flow:
+      - post:
+          url: "/api/auth/login"
+          name: "Message Login"
+          json:
+            email: "admin@example.com"
+            password: "AdminPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "msgToken"
+
+      - post:
+          url: "/api/messages"
+          name: "Rapid Message"
+          headers:
+            Authorization: "Bearer {{ msgToken }}"
+          json:
+            subject: "Spike Test {{ $randomString() }}"
+            content: "Quick message"
+            from: "{{ testEmail }}"
+            to: "support@example.com"
+            type: "email"
+          expect:
+            - statusCode: 201
+
+  - name: "Health Check Flood"
+    weight: 20
+    flow:
+      - get:
+          url: "/health"
+          name: "Health Check"
+          expect:
+            - statusCode: 200
+
+      - get:
+          url: "/metrics"
+          name: "Metrics Check"
+          expect:
+            - statusCode: 200
+
+  - name: "Dashboard Spike"
+    weight: 10
+    flow:
+      - post:
+          url: "/api/auth/login"
+          name: "Dashboard Login"
+          json:
+            email: "admin@example.com"
+            password: "AdminPassword123!"
+          capture:
+            - json: "$.data.token"
+              as: "dashToken"
+
+      - get:
+          url: "/api/analytics/dashboard"
+          name: "Dashboard Load"
+          headers:
+            Authorization: "Bearer {{ dashToken }}"
+          expect:
+            - statusCode: 200
+
+# Spike test expectations (more lenient)
+expect:
+  - p95: 3000   # 95th percentile under 3 seconds during spikes
+  - p99: 8000   # 99th percentile under 8 seconds
+  - median: 1000 # Median under 1 second
+  - errorRate: 10 # Up to 10% error rate during extreme spikes
