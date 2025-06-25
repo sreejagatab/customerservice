@@ -1004,6 +1004,16 @@ For enterprise deployments with additional features and support:
 
 The Universal AI Customer Service Platform delivers measurable business impact across industries. Our enterprise clients achieve **40-60% cost reduction**, **3x productivity gains**, and **99.9% uptime** while handling millions of customer interactions daily.
 
+### 📋 **Must Know - Complete Platform Guide**
+**[📖 Read Complete Capabilities Guide →](./docs/MY_Guide.md)**
+
+Before exploring use cases, understand everything our platform can do:
+- **🔄 Complete tool replacement analysis** - What it replaces vs. cost savings
+- **🔗 Integration capabilities** - 50+ platforms and unlimited custom connections
+- **✨ Full feature matrix** - AI, voice, analytics, automation, and enterprise features
+- **💼 Service pricing structure** - Detailed pricing for all services and add-ons
+- **📄 Document generation** - Reports, compliance docs, and content creation capabilities
+
 #### **🔥 Real-Time Platform Capabilities**
 
 **What It Does:**
