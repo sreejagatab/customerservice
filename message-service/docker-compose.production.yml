@@ -1,0 +1,278 @@
+# Production Docker Compose Configuration for Message Service
+# Universal AI Customer Service Platform
+
+version: '3.8'
+
+services:
+  message-service:
+    image: universal-ai-cs/message-service:${DOCKER_TAG:-latest}
+    container_name: message-service-prod
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3004
+      - SERVICE_NAME=message-service
+      
+      # Database Configuration
+      - DATABASE_URL=${DATABASE_URL}
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-universal_ai_cs}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_SSL=${DB_SSL:-true}
+      - DB_POOL_MIN=${DB_POOL_MIN:-5}
+      - DB_POOL_MAX=${DB_POOL_MAX:-50}
+      
+      # Redis Configuration
+      - REDIS_URL=${REDIS_URL}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_DB=${REDIS_DB:-0}
+      
+      # RabbitMQ Configuration
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - RABBITMQ_HOST=${RABBITMQ_HOST:-rabbitmq}
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST:-/}
+      
+      # JWT Configuration
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-24h}
+      
+      # Message Processing Configuration
+      - MESSAGE_BATCH_SIZE=${MESSAGE_BATCH_SIZE:-100}
+      - MESSAGE_PROCESSING_TIMEOUT=${MESSAGE_PROCESSING_TIMEOUT:-30000}
+      - MESSAGE_RETRY_ATTEMPTS=${MESSAGE_RETRY_ATTEMPTS:-3}
+      - MESSAGE_RETRY_DELAY=${MESSAGE_RETRY_DELAY:-5000}
+      
+      # Queue Configuration
+      - QUEUE_CONCURRENCY=${QUEUE_CONCURRENCY:-20}
+      - QUEUE_MAX_ATTEMPTS=${QUEUE_MAX_ATTEMPTS:-3}
+      - QUEUE_BACKOFF_DELAY=${QUEUE_BACKOFF_DELAY:-2000}
+      - QUEUE_REMOVE_ON_COMPLETE=${QUEUE_REMOVE_ON_COMPLETE:-100}
+      - QUEUE_REMOVE_ON_FAIL=${QUEUE_REMOVE_ON_FAIL:-50}
+      
+      # Rate Limiting
+      - RATE_LIMIT_WINDOW_MS=${RATE_LIMIT_WINDOW_MS:-60000}
+      - RATE_LIMIT_MAX_REQUESTS=${RATE_LIMIT_MAX_REQUESTS:-1000}
+      
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      
+      # External Services
+      - AI_SERVICE_URL=${AI_SERVICE_URL:-http://ai-service:3003}
+      - AI_SERVICE_API_KEY=${AI_SERVICE_API_KEY}
+      - INTEGRATION_SERVICE_URL=${INTEGRATION_SERVICE_URL:-http://integration-service:3002}
+      - INTEGRATION_SERVICE_API_KEY=${INTEGRATION_SERVICE_API_KEY}
+      - NOTIFICATION_SERVICE_URL=${NOTIFICATION_SERVICE_URL:-http://notification-service:3005}
+      - NOTIFICATION_SERVICE_API_KEY=${NOTIFICATION_SERVICE_API_KEY}
+      
+      # Webhook Configuration
+      - WEBHOOK_TIMEOUT=${WEBHOOK_TIMEOUT:-10000}
+      - WEBHOOK_RETRY_ATTEMPTS=${WEBHOOK_RETRY_ATTEMPTS:-3}
+      - WEBHOOK_RETRY_DELAY=${WEBHOOK_RETRY_DELAY:-1000}
+      
+      # Performance Monitoring
+      - ENABLE_METRICS=${ENABLE_METRICS:-true}
+      - METRICS_PORT=${METRICS_PORT:-9094}
+      
+      # Security
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - TRUST_PROXY=${TRUST_PROXY:-true}
+      - ENABLE_REQUEST_LOGGING=${ENABLE_REQUEST_LOGGING:-true}
+      
+      # Feature Flags
+      - ENABLE_MESSAGE_ENCRYPTION=${ENABLE_MESSAGE_ENCRYPTION:-false}
+      - ENABLE_MESSAGE_COMPRESSION=${ENABLE_MESSAGE_COMPRESSION:-true}
+      - ENABLE_REAL_TIME_SYNC=${ENABLE_REAL_TIME_SYNC:-true}
+      - ENABLE_MESSAGE_DEDUPLICATION=${ENABLE_MESSAGE_DEDUPLICATION:-true}
+    
+    ports:
+      - "3004:3004"
+      - "9094:9094" # Metrics port
+    
+    networks:
+      - universal-ai-cs-network
+    
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+    
+    volumes:
+      - message-service-logs:/app/logs
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.message-service.rule=Host(`message-service.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.message-service.tls=true"
+      - "traefik.http.routers.message-service.tls.certresolver=letsencrypt"
+      - "traefik.http.services.message-service.loadbalancer.server.port=3004"
+      - "traefik.http.middlewares.message-service-auth.basicauth.users=${TRAEFIK_USERS}"
+      - "traefik.http.routers.message-service.middlewares=message-service-auth"
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres-prod
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${DB_NAME:-universal_ai_cs}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    networks:
+      - universal-ai-cs-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis-prod
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - universal-ai-cs-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq-prod
+    restart: unless-stopped
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-guest}
+      - RABBITMQ_DEFAULT_VHOST=${RABBITMQ_VHOST:-/}
+    ports:
+      - "5672:5672"
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - universal-ai-cs-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Monitoring and Observability
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus-prod
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - universal-ai-cs-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana-prod
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - universal-ai-cs-network
+
+networks:
+  universal-ai-cs-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  rabbitmq-data:
+    driver: local
+  message-service-logs:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
