@@ -812,6 +812,231 @@ export class IVRService {
   }
 
   /**
+   * Process IVR interaction from webhook
+   */
+  public async processInteraction(interactionData: {
+    callSid: string;
+    from: string;
+    to: string;
+    input: string;
+    inputType: 'dtmf' | 'speech';
+    confidence?: number;
+  }): Promise<string> {
+    try {
+      // Find active session by call SID
+      let session = this.findSessionByCallSid(interactionData.callSid);
+
+      if (!session) {
+        // Create new session if none exists
+        const organizationId = await this.findOrganizationByPhoneNumber(interactionData.to);
+        session = await this.startIVRSession(
+          interactionData.callSid,
+          organizationId
+        );
+      }
+
+      // Update session with interaction
+      session.callHistory.push({
+        nodeId: session.currentNodeId,
+        input: interactionData.input,
+        inputType: interactionData.inputType,
+        confidence: interactionData.confidence,
+        timestamp: new Date(),
+      });
+
+      session.lastActivity = new Date();
+
+      // Get current node
+      const flow = this.ivrFlows.get(session.flowId);
+      if (!flow) {
+        throw new Error('IVR flow not found');
+      }
+
+      const currentNode = flow.nodes.find(node => node.id === session.currentNodeId);
+      if (!currentNode) {
+        throw new Error('Current IVR node not found');
+      }
+
+      // Process the interaction based on node type
+      let nextNodeId: string | null = null;
+      let responseText = '';
+
+      if (currentNode.type === 'menu') {
+        // Handle menu selection
+        const selectedOption = currentNode.config.menuOptions?.find(
+          option => option.key === interactionData.input
+        );
+
+        if (selectedOption) {
+          nextNodeId = selectedOption.nextNodeId;
+          responseText = selectedOption.responseText || '';
+        } else {
+          // Invalid selection
+          session.retryCount++;
+          if (session.retryCount >= 3) {
+            nextNodeId = currentNode.config.fallbackNodeId || null;
+            responseText = 'Too many invalid attempts. Transferring you to an agent.';
+          } else {
+            responseText = 'Invalid selection. Please try again.';
+          }
+        }
+      } else if (currentNode.type === 'input') {
+        // Handle input collection
+        session.sessionData[currentNode.config.variableName || 'input'] = interactionData.input;
+        nextNodeId = currentNode.config.nextNodeId;
+        responseText = currentNode.config.confirmationText || 'Thank you for your input.';
+      } else if (currentNode.type === 'condition') {
+        // Handle conditional logic
+        const condition = this.evaluateCondition(currentNode.config.condition, session.sessionData);
+        nextNodeId = condition ? currentNode.config.trueNodeId : currentNode.config.falseNodeId;
+      }
+
+      // Update session with next node
+      if (nextNodeId) {
+        session.currentNodeId = nextNodeId;
+        session.retryCount = 0;
+      }
+
+      // Generate TwiML response
+      const twiml = await this.generateTwiMLResponse(session, responseText);
+
+      return twiml;
+    } catch (error) {
+      logger.error('Error processing IVR interaction', {
+        callSid: interactionData.callSid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      // Return fallback TwiML
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>I'm sorry, there was an error processing your request. Please hold while we connect you to an agent.</Say>
+  <Dial>
+    <Queue>support</Queue>
+  </Dial>
+</Response>`;
+    }
+  }
+
+  /**
+   * Find session by call SID
+   */
+  private findSessionByCallSid(callSid: string): IVRSession | undefined {
+    for (const session of this.activeSessions.values()) {
+      if (session.callId === callSid) {
+        return session;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Find organization by phone number
+   */
+  private async findOrganizationByPhoneNumber(phoneNumber: string): Promise<string> {
+    // This would typically query the database
+    return 'default-org';
+  }
+
+  /**
+   * Evaluate condition
+   */
+  private evaluateCondition(condition: any, sessionData: Record<string, any>): boolean {
+    try {
+      // Simple condition evaluation - in production, use a proper expression evaluator
+      if (condition.type === 'equals') {
+        return sessionData[condition.variable] === condition.value;
+      } else if (condition.type === 'contains') {
+        return sessionData[condition.variable]?.includes(condition.value);
+      } else if (condition.type === 'greater_than') {
+        return parseFloat(sessionData[condition.variable]) > parseFloat(condition.value);
+      }
+      return false;
+    } catch (error) {
+      logger.error('Error evaluating condition', { condition, sessionData, error });
+      return false;
+    }
+  }
+
+  /**
+   * Generate TwiML response
+   */
+  private async generateTwiMLResponse(session: IVRSession, responseText: string): Promise<string> {
+    try {
+      const flow = this.ivrFlows.get(session.flowId);
+      if (!flow) {
+        throw new Error('IVR flow not found');
+      }
+
+      const currentNode = flow.nodes.find(node => node.id === session.currentNodeId);
+      if (!currentNode) {
+        throw new Error('Current IVR node not found');
+      }
+
+      let twiml = '<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n';
+
+      // Add response text if provided
+      if (responseText) {
+        twiml += `  <Say>${responseText}</Say>\n`;
+      }
+
+      // Add node-specific TwiML
+      if (currentNode.type === 'message') {
+        twiml += `  <Say>${currentNode.config.message}</Say>\n`;
+        if (currentNode.config.nextNodeId) {
+          twiml += `  <Redirect>${config.twilio.webhookUrl}/voice/ivr/${session.callId}</Redirect>\n`;
+        } else {
+          twiml += '  <Hangup/>\n';
+        }
+      } else if (currentNode.type === 'menu') {
+        let menuText = currentNode.config.promptText || 'Please select from the following options: ';
+
+        if (currentNode.config.menuOptions) {
+          for (const option of currentNode.config.menuOptions) {
+            menuText += `Press ${option.key} for ${option.label}. `;
+          }
+        }
+
+        twiml += `  <Gather input="dtmf" timeout="10" numDigits="1" action="${config.twilio.webhookUrl}/voice/ivr/${session.callId}">\n`;
+        twiml += `    <Say>${menuText}</Say>\n`;
+        twiml += '  </Gather>\n';
+        twiml += '  <Say>I didn\'t receive your selection. Please try again.</Say>\n';
+        twiml += `  <Redirect>${config.twilio.webhookUrl}/voice/ivr/${session.callId}</Redirect>\n`;
+      } else if (currentNode.type === 'input') {
+        twiml += `  <Gather input="dtmf speech" timeout="10" action="${config.twilio.webhookUrl}/voice/ivr/${session.callId}">\n`;
+        twiml += `    <Say>${currentNode.config.promptText}</Say>\n`;
+        twiml += '  </Gather>\n';
+      } else if (currentNode.type === 'transfer') {
+        twiml += `  <Say>Transferring your call now.</Say>\n`;
+        if (currentNode.config.transferType === 'agent') {
+          twiml += '  <Dial>\n';
+          twiml += '    <Queue>support</Queue>\n';
+          twiml += '  </Dial>\n';
+        } else if (currentNode.config.transferType === 'phone') {
+          twiml += `  <Dial>${currentNode.config.phoneNumber}</Dial>\n`;
+        }
+      }
+
+      twiml += '</Response>';
+
+      return twiml;
+    } catch (error) {
+      logger.error('Error generating TwiML response', {
+        sessionId: session.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>I'm sorry, there was an error. Please hold while we connect you to an agent.</Say>
+  <Dial>
+    <Queue>support</Queue>
+  </Dial>
+</Response>`;
+    }
+  }
+
+  /**
    * Health check
    */
   public async healthCheck(): Promise<{
@@ -834,7 +1059,7 @@ export class IVRService {
       logger.error('IVR health check failed', {
         error: error instanceof Error ? error.message : String(error),
       });
-      
+
       return {
         activeFlows: 0,
         activeSessions: 0,

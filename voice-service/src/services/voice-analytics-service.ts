@@ -738,6 +738,245 @@ export class VoiceAnalyticsService {
   }
 
   /**
+   * Process call recording for analytics
+   */
+  public async processCallRecording(callSid: string, recordingUrl: string): Promise<void> {
+    try {
+      logger.info('Processing call recording for analytics', {
+        callSid,
+        recordingUrl,
+      });
+
+      // Download and analyze the recording
+      const audioBuffer = await this.downloadRecording(recordingUrl);
+
+      // Perform various analyses
+      const analyses = await Promise.allSettled([
+        this.analyzeCallQuality(callSid, audioBuffer),
+        this.performBiometricAnalysis(callSid, audioBuffer),
+        this.extractKeywords(callSid, audioBuffer),
+      ]);
+
+      // Log results
+      analyses.forEach((result, index) => {
+        const analysisType = ['quality', 'biometric', 'keywords'][index];
+        if (result.status === 'fulfilled') {
+          logger.info(`${analysisType} analysis completed`, {
+            callSid,
+            confidence: result.value.confidence,
+          });
+        } else {
+          logger.error(`${analysisType} analysis failed`, {
+            callSid,
+            error: result.reason,
+          });
+        }
+      });
+
+    } catch (error) {
+      logger.error('Error processing call recording', {
+        callSid,
+        recordingUrl,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Process call transcription for analytics
+   */
+  public async processCallTranscription(callSid: string, transcriptionText: string): Promise<void> {
+    try {
+      logger.info('Processing call transcription for analytics', {
+        callSid,
+        textLength: transcriptionText.length,
+      });
+
+      // Perform text-based analyses
+      const analyses = await Promise.allSettled([
+        this.analyzeSentiment(callSid, transcriptionText),
+        this.analyzeEmotions(callSid, transcriptionText),
+        this.extractKeywordsFromText(callSid, transcriptionText),
+      ]);
+
+      // Log results
+      analyses.forEach((result, index) => {
+        const analysisType = ['sentiment', 'emotion', 'keywords'][index];
+        if (result.status === 'fulfilled') {
+          logger.info(`${analysisType} analysis completed`, {
+            callSid,
+            confidence: result.value.confidence,
+          });
+        } else {
+          logger.error(`${analysisType} analysis failed`, {
+            callSid,
+            error: result.reason,
+          });
+        }
+      });
+
+    } catch (error) {
+      logger.error('Error processing call transcription', {
+        callSid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Download recording from URL
+   */
+  private async downloadRecording(recordingUrl: string): Promise<Buffer> {
+    try {
+      const response = await axios.get(recordingUrl, {
+        responseType: 'arraybuffer',
+        timeout: 30000,
+      });
+      return Buffer.from(response.data);
+    } catch (error) {
+      logger.error('Error downloading recording', {
+        recordingUrl,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Extract keywords from text
+   */
+  private async extractKeywordsFromText(callId: string, text: string): Promise<VoiceAnalysis> {
+    try {
+      // Simple keyword extraction - in production, use NLP libraries
+      const keywords = text
+        .toLowerCase()
+        .split(/\W+/)
+        .filter(word => word.length > 3)
+        .reduce((acc, word) => {
+          acc[word] = (acc[word] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+
+      const topKeywords = Object.entries(keywords)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 10)
+        .map(([word, count]) => ({ word, count, relevance: count / text.split(/\W+/).length }));
+
+      const analysis: VoiceAnalysis = {
+        callId,
+        organizationId: 'default-org',
+        analysisType: 'keyword',
+        timestamp: new Date(),
+        results: {
+          keywords: {
+            totalKeywords: topKeywords.length,
+            topKeywords,
+            categories: this.categorizeKeywords(topKeywords),
+            sentiment: 'neutral',
+            urgencyIndicators: this.findUrgencyIndicators(text),
+            satisfactionIndicators: this.findSatisfactionIndicators(text),
+          },
+        },
+        confidence: 0.8,
+        processingTime: Date.now(),
+        metadata: {
+          textLength: text.length,
+          wordCount: text.split(/\W+/).length,
+        },
+      };
+
+      return analysis;
+    } catch (error) {
+      logger.error('Error extracting keywords from text', {
+        callId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Categorize keywords
+   */
+  private categorizeKeywords(keywords: Array<{ word: string; count: number; relevance: number }>): Record<string, string[]> {
+    const categories: Record<string, string[]> = {
+      product: [],
+      service: [],
+      emotion: [],
+      action: [],
+      other: [],
+    };
+
+    const productWords = ['product', 'item', 'order', 'purchase', 'buy', 'price', 'cost'];
+    const serviceWords = ['help', 'support', 'service', 'assistance', 'problem', 'issue'];
+    const emotionWords = ['happy', 'sad', 'angry', 'frustrated', 'pleased', 'disappointed'];
+    const actionWords = ['cancel', 'return', 'refund', 'exchange', 'fix', 'resolve'];
+
+    keywords.forEach(({ word }) => {
+      if (productWords.includes(word)) {
+        categories.product.push(word);
+      } else if (serviceWords.includes(word)) {
+        categories.service.push(word);
+      } else if (emotionWords.includes(word)) {
+        categories.emotion.push(word);
+      } else if (actionWords.includes(word)) {
+        categories.action.push(word);
+      } else {
+        categories.other.push(word);
+      }
+    });
+
+    return categories;
+  }
+
+  /**
+   * Find urgency indicators
+   */
+  private findUrgencyIndicators(text: string): Array<{ indicator: string; position: number; context: string }> {
+    const urgencyWords = ['urgent', 'emergency', 'asap', 'immediately', 'critical', 'important'];
+    const indicators: Array<{ indicator: string; position: number; context: string }> = [];
+
+    urgencyWords.forEach(word => {
+      const regex = new RegExp(`\\b${word}\\b`, 'gi');
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        const start = Math.max(0, match.index - 20);
+        const end = Math.min(text.length, match.index + word.length + 20);
+        indicators.push({
+          indicator: word,
+          position: match.index,
+          context: text.substring(start, end),
+        });
+      }
+    });
+
+    return indicators;
+  }
+
+  /**
+   * Find satisfaction indicators
+   */
+  private findSatisfactionIndicators(text: string): Array<{ indicator: string; sentiment: 'positive' | 'negative'; position: number }> {
+    const positiveWords = ['thank', 'thanks', 'great', 'excellent', 'perfect', 'satisfied', 'happy'];
+    const negativeWords = ['terrible', 'awful', 'horrible', 'disappointed', 'frustrated', 'angry'];
+    const indicators: Array<{ indicator: string; sentiment: 'positive' | 'negative'; position: number }> = [];
+
+    [...positiveWords, ...negativeWords].forEach(word => {
+      const regex = new RegExp(`\\b${word}\\b`, 'gi');
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        indicators.push({
+          indicator: word,
+          sentiment: positiveWords.includes(word) ? 'positive' : 'negative',
+          position: match.index,
+        });
+      }
+    });
+
+    return indicators;
+  }
+
+  /**
    * Health check
    */
   public async healthCheck(): Promise<{

@@ -13,6 +13,9 @@ dotenv.config();
 // Import services and middleware
 import { ServiceRegistry } from './services/service-registry';
 import { ProxyService } from './services/proxy.service';
+import { LoadBalancerService } from './services/load-balancer';
+import { ApiVersioningService } from './services/api-versioning';
+import { ApiDocumentationService } from './services/api-documentation';
 import { GatewayMiddleware } from './middleware/gateway.middleware';
 import { RateLimitMiddleware } from './middleware/rate-limit.middleware';
 import { ErrorCode } from '@universal-ai-cs/shared';
@@ -22,6 +25,9 @@ class ApiGateway {
   private server: any;
   private serviceRegistry: ServiceRegistry;
   private proxyService: ProxyService;
+  private loadBalancer: LoadBalancerService;
+  private versioningService: ApiVersioningService;
+  private documentationService: ApiDocumentationService;
   private gatewayMiddleware: GatewayMiddleware;
   private rateLimitMiddleware: RateLimitMiddleware;
 
@@ -51,6 +57,26 @@ class ApiGateway {
         resetTimeout: parseInt(process.env.CIRCUIT_BREAKER_RESET || '60000'),
       },
     });
+
+    // Initialize load balancer
+    this.loadBalancer = new LoadBalancerService(this.serviceRegistry, {
+      algorithm: (process.env.LOAD_BALANCER_ALGORITHM as any) || 'round-robin',
+      healthCheckInterval: parseInt(process.env.HEALTH_CHECK_INTERVAL || '30000'),
+      failureThreshold: parseInt(process.env.FAILURE_THRESHOLD || '3'),
+      recoveryThreshold: parseInt(process.env.RECOVERY_THRESHOLD || '2'),
+    });
+
+    // Initialize versioning service
+    this.versioningService = new ApiVersioningService(this.serviceRegistry, {
+      defaultVersion: process.env.DEFAULT_API_VERSION || 'v1',
+      supportedVersions: (process.env.SUPPORTED_API_VERSIONS || 'v1').split(','),
+    });
+
+    // Initialize documentation service
+    this.documentationService = new ApiDocumentationService(
+      this.serviceRegistry,
+      this.versioningService
+    );
 
     // Initialize middleware
     this.gatewayMiddleware = new GatewayMiddleware(
@@ -102,6 +128,11 @@ class ApiGateway {
     this.app.use(this.gatewayMiddleware.requestLogger);
     this.app.use(this.gatewayMiddleware.validateRequest);
 
+    // API versioning middleware
+    this.app.use('/api', this.versioningService.versionMiddleware());
+    this.app.use('/api', this.versioningService.routeVersioningMiddleware());
+    this.app.use('/api', this.versioningService.transformationMiddleware());
+
     // Rate limiting
     this.app.use('/api', this.rateLimitMiddleware.createApiLimiter(
       parseInt(process.env.RATE_LIMIT_MAX || '100'),
@@ -151,39 +182,65 @@ class ApiGateway {
     this.app.get('/metrics', (req, res) => {
       const serviceStats = this.serviceRegistry.getStats();
       const proxyMetrics = this.proxyService.getMetrics();
-      
+      const loadBalancerMetrics = this.loadBalancer.getMetrics();
+      const versioningMetrics = this.versioningService.getMetrics();
+
       res.json({
         success: true,
         data: {
           services: serviceStats,
           proxy: proxyMetrics,
+          loadBalancer: loadBalancerMetrics,
+          versioning: versioningMetrics,
           timestamp: new Date().toISOString(),
         },
       });
     });
 
+    // Load balancer endpoints
+    this.app.get('/load-balancer/health', (req, res) => {
+      const instanceHealth = this.loadBalancer.getInstanceHealth();
+      res.json({
+        success: true,
+        data: instanceHealth,
+      });
+    });
+
+    // API versioning endpoints
+    this.app.get('/api/versions', (req, res) => {
+      const versions = this.versioningService.getSupportedVersions();
+      res.json({
+        success: true,
+        data: versions,
+      });
+    });
+
+    // API documentation endpoints
+    this.app.get('/api/docs/openapi.json', (req, res) => {
+      const version = req.query.version as string;
+      const spec = this.documentationService.generateOpenApiSpec(version);
+      res.json(spec);
+    });
+
+    this.app.get('/api/docs/openapi.yaml', (req, res) => {
+      const version = req.query.version as string;
+      const spec = this.documentationService.generateDocumentation('yaml', version);
+      res.setHeader('Content-Type', 'application/x-yaml');
+      res.send(spec);
+    });
+
     // API Documentation
     if (process.env.NODE_ENV !== 'production') {
-      const swaggerOptions = {
-        definition: {
-          openapi: '3.0.0',
-          info: {
-            title: 'Universal AI Customer Service API',
-            version: '1.0.0',
-            description: 'API Gateway for Universal AI Customer Service Platform',
-          },
-          servers: [
-            {
-              url: `http://localhost:${process.env.PORT || 3000}`,
-              description: 'Development server',
-            },
-          ],
-        },
-        apis: ['./src/routes/*.ts'], // Path to the API docs
-      };
+      // Swagger UI for interactive documentation
+      this.app.use('/api-docs', swaggerUi.serve);
+      this.app.get('/api-docs', this.documentationService.generateSwaggerMiddleware());
 
-      const specs = swaggerJsdoc(swaggerOptions);
-      this.app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
+      // Version-specific documentation
+      this.app.get('/api-docs/:version', (req, res, next) => {
+        const version = req.params.version;
+        const middleware = this.documentationService.generateSwaggerMiddleware(version);
+        middleware(req, res, next);
+      });
     }
 
     // Dynamic routing based on service registry

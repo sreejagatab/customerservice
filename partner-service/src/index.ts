@@ -114,24 +114,24 @@ class PartnerServiceApp {
     this.app.use('/health', healthRoutes);
 
     // API routes with tenant context
-    this.app.use('/api/v1/partners', 
-      this.tenantMiddleware.extractTenantContext,
-      partnerRoutes(this.partnerService)
+    this.app.use('/api/v1/partners',
+      // this.tenantMiddleware.extractTenantContext,
+      partnerRoutes
     );
 
-    this.app.use('/api/v1/branding', 
-      this.tenantMiddleware.extractTenantContext,
-      brandingRoutes(this.brandingService)
+    this.app.use('/api/v1/branding',
+      // this.tenantMiddleware.extractTenantContext,
+      brandingRoutes
     );
 
-    this.app.use('/api/v1/revenue', 
-      this.tenantMiddleware.extractTenantContext,
-      revenueRoutes(this.partnerService)
+    this.app.use('/api/v1/revenue',
+      // this.tenantMiddleware.extractTenantContext,
+      revenueRoutes
     );
 
-    this.app.use('/api/v1/onboarding', 
-      this.tenantMiddleware.extractTenantContext,
-      onboardingRoutes(this.partnerService, this.brandingService)
+    this.app.use('/api/v1/onboarding',
+      // this.tenantMiddleware.extractTenantContext,
+      onboardingRoutes
     );
 
     // API documentation

@@ -762,13 +762,292 @@ export class CallHandlingService {
   }
 
   /**
+   * Handle incoming call webhook
+   */
+  public async handleIncomingCall(callData: {
+    callSid: string;
+    from: string;
+    to: string;
+    status: string;
+  }): Promise<string> {
+    try {
+      // Find organization by phone number
+      const organizationId = await this.findOrganizationByPhoneNumber(callData.to);
+
+      // Create call record
+      const call = await this.handleIncomingCall(
+        callData.from,
+        callData.to,
+        organizationId,
+        { twilioSid: callData.callSid }
+      );
+
+      // Generate TwiML response
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>Welcome to our customer service. Please hold while we connect you to an agent.</Say>
+  <Enqueue waitUrl="${config.twilio.webhookUrl}/voice/queue/${call.id}">support</Enqueue>
+</Response>`;
+
+      return twiml;
+    } catch (error) {
+      logger.error('Error handling incoming call', {
+        callSid: callData.callSid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      // Return fallback TwiML
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>I'm sorry, we're experiencing technical difficulties. Please try again later.</Say>
+  <Hangup/>
+</Response>`;
+    }
+  }
+
+  /**
+   * Update call status
+   */
+  public async updateCallStatus(
+    callSid: string,
+    status: string,
+    metadata?: {
+      duration?: number;
+      recordingUrl?: string;
+      recordingDuration?: number;
+    }
+  ): Promise<void> {
+    try {
+      const call = this.findCallBySid(callSid);
+      if (call) {
+        call.status = status as any;
+        call.updatedAt = new Date();
+
+        if (metadata?.duration) {
+          call.duration = metadata.duration;
+        }
+
+        if (metadata?.recordingUrl) {
+          call.metadata.recordingUrl = metadata.recordingUrl;
+        }
+
+        if (metadata?.recordingDuration) {
+          call.metadata.recordingDuration = metadata.recordingDuration;
+        }
+
+        // If call is completed, remove from active calls
+        if (status === 'completed' || status === 'failed' || status === 'canceled') {
+          call.endTime = new Date();
+          this.activeCalls.delete(call.id);
+        }
+
+        logger.info('Call status updated', {
+          callId: call.id,
+          callSid,
+          status,
+          duration: call.duration,
+        });
+      }
+    } catch (error) {
+      logger.error('Error updating call status', {
+        callSid,
+        status,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Update call recording information
+   */
+  public async updateCallRecording(
+    callSid: string,
+    recordingData: {
+      recordingSid: string;
+      recordingUrl: string;
+      recordingStatus: string;
+      recordingDuration?: number;
+    }
+  ): Promise<void> {
+    try {
+      const call = this.findCallBySid(callSid);
+      if (call) {
+        call.metadata.recordingSid = recordingData.recordingSid;
+        call.metadata.recordingUrl = recordingData.recordingUrl;
+        call.metadata.recordingStatus = recordingData.recordingStatus;
+
+        if (recordingData.recordingDuration) {
+          call.metadata.recordingDuration = recordingData.recordingDuration;
+        }
+
+        call.updatedAt = new Date();
+
+        logger.info('Call recording updated', {
+          callId: call.id,
+          callSid,
+          recordingSid: recordingData.recordingSid,
+          status: recordingData.recordingStatus,
+        });
+      }
+    } catch (error) {
+      logger.error('Error updating call recording', {
+        callSid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Update call transcription
+   */
+  public async updateCallTranscription(
+    callSid: string,
+    transcriptionData: {
+      transcriptionSid: string;
+      transcriptionText: string;
+      transcriptionStatus: string;
+      transcriptionUrl?: string;
+    }
+  ): Promise<void> {
+    try {
+      const call = this.findCallBySid(callSid);
+      if (call) {
+        call.metadata.transcriptionSid = transcriptionData.transcriptionSid;
+        call.metadata.transcriptionText = transcriptionData.transcriptionText;
+        call.metadata.transcriptionStatus = transcriptionData.transcriptionStatus;
+
+        if (transcriptionData.transcriptionUrl) {
+          call.metadata.transcriptionUrl = transcriptionData.transcriptionUrl;
+        }
+
+        call.updatedAt = new Date();
+
+        logger.info('Call transcription updated', {
+          callId: call.id,
+          callSid,
+          transcriptionSid: transcriptionData.transcriptionSid,
+          textLength: transcriptionData.transcriptionText.length,
+        });
+      }
+    } catch (error) {
+      logger.error('Error updating call transcription', {
+        callSid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Handle queue events
+   */
+  public async handleQueueEvent(queueData: {
+    callSid: string;
+    queueResult: string;
+    queueTime?: number;
+    queueSid: string;
+  }): Promise<string> {
+    try {
+      const call = this.findCallBySid(queueData.callSid);
+
+      if (queueData.queueResult === 'bridged') {
+        // Call was connected to an agent
+        return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>You are now connected to an agent.</Say>
+</Response>`;
+      } else if (queueData.queueResult === 'hangup') {
+        // Caller hung up while in queue
+        if (call) {
+          call.status = 'completed';
+          call.endTime = new Date();
+          this.activeCalls.delete(call.id);
+        }
+        return '';
+      } else {
+        // Other queue events
+        return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>Please continue to hold. An agent will be with you shortly.</Say>
+</Response>`;
+      }
+    } catch (error) {
+      logger.error('Error handling queue event', {
+        callSid: queueData.callSid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>Please continue to hold.</Say>
+</Response>`;
+    }
+  }
+
+  /**
+   * Handle conference events
+   */
+  public async handleConferenceEvent(conferenceData: {
+    conferenceSid: string;
+    event: string;
+    callSid: string;
+    muted: boolean;
+    hold: boolean;
+  }): Promise<void> {
+    try {
+      const call = this.findCallBySid(conferenceData.callSid);
+
+      if (call) {
+        call.metadata.conferenceSid = conferenceData.conferenceSid;
+        call.metadata.conferenceEvent = conferenceData.event;
+        call.metadata.muted = conferenceData.muted;
+        call.metadata.hold = conferenceData.hold;
+        call.updatedAt = new Date();
+
+        logger.info('Conference event handled', {
+          callId: call.id,
+          conferenceSid: conferenceData.conferenceSid,
+          event: conferenceData.event,
+          muted: conferenceData.muted,
+          hold: conferenceData.hold,
+        });
+      }
+    } catch (error) {
+      logger.error('Error handling conference event', {
+        conferenceSid: conferenceData.conferenceSid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Find call by Twilio SID
+   */
+  private findCallBySid(callSid: string): Call | undefined {
+    for (const call of this.activeCalls.values()) {
+      if (call.metadata.twilioSid === callSid) {
+        return call;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Find organization by phone number
+   */
+  private async findOrganizationByPhoneNumber(phoneNumber: string): Promise<string> {
+    // This would typically query the database to find the organization
+    // For now, return a default organization ID
+    return 'default-org';
+  }
+
+  /**
    * Health check
    */
   public async healthCheck(): Promise<{ twilio: boolean; queues: number; agents: number }> {
     try {
       // Check Twilio connectivity
       const twilioHealth = await this.twilioClient.api.accounts(config.twilio.accountSid).fetch();
-      
+
       return {
         twilio: !!twilioHealth,
         queues: this.callQueues.size,
@@ -778,7 +1057,7 @@ export class CallHandlingService {
       logger.error('Call handling health check failed', {
         error: error instanceof Error ? error.message : String(error),
       });
-      
+
       return {
         twilio: false,
         queues: this.callQueues.size,

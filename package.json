@@ -15,11 +15,15 @@
     "analytics-service",
     "notification-service",
     "admin-service",
+    "voice-service",
+    "partner-service",
+    "security-service",
+    "performance-service",
     "frontend"
   ],
   "scripts": {
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "dev:backend": "concurrently \"npm run dev -w api-gateway\" \"npm run dev -w auth-service\" \"npm run dev -w integration-service\" \"npm run dev -w ai-service\" \"npm run dev -w message-service\" \"npm run dev -w workflow-service\" \"npm run dev -w analytics-service\" \"npm run dev -w notification-service\" \"npm run dev -w admin-service\"",
+    "dev:backend": "concurrently \"npm run dev -w api-gateway\" \"npm run dev -w auth-service\" \"npm run dev -w integration-service\" \"npm run dev -w ai-service\" \"npm run dev -w message-service\" \"npm run dev -w workflow-service\" \"npm run dev -w analytics-service\" \"npm run dev -w notification-service\" \"npm run dev -w admin-service\" \"npm run dev -w voice-service\" \"npm run dev -w partner-service\"",
     "dev:frontend": "npm run dev -w frontend",
     "build": "npm run build --workspaces",
     "build:backend": "npm run build --workspaces --if-present --ignore frontend",

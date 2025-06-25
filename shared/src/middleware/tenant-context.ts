@@ -6,6 +6,10 @@
 import { Request, Response, NextFunction } from 'express';
 import { Logger } from '../utils/logger';
 import { DatabaseService } from '../services/database';
+import { TenantIsolationService } from '../services/tenant-isolation';
+import { TenantConfigurationService } from '../services/tenant-configuration';
+import { BillingIntegrationService } from '../services/billing-integration';
+import { CustomDomainService } from '../services/custom-domain';
 
 export interface TenantContext {
   organizationId: string;

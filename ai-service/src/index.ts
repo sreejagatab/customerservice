@@ -19,14 +19,23 @@ import {
 } from '@/utils/errors';
 import { DatabaseService } from '@/services/database';
 import { AiQueueService } from '@/services/queue';
+import { MLPipelineService } from '@/services/ml-pipeline';
+import { IndustryModelsService } from '@/services/industry-models';
+import { PredictiveAnalyticsService } from '@/services/predictive-analytics';
 
 // Import routes
 import aiRoutes from '@/routes/ai';
 import healthRoutes from '@/routes/health';
+import mlRoutes from '@/routes/ml';
+import mlRoutes from '@/routes/ml';
+import mlRoutes from '@/routes/ml';
 
 class AiService {
   private app: Application;
   private server: Server | null = null;
+  private mlPipeline?: MLPipelineService;
+  private industryModels?: IndustryModelsService;
+  private predictiveAnalytics?: PredictiveAnalyticsService;
 
   constructor() {
     this.app = express();
@@ -123,6 +132,7 @@ class AiService {
     // API routes
     this.app.use('/api/v1/ai', aiRoutes);
     this.app.use('/api/v1/health', healthRoutes);
+    this.app.use('/api/v1/ml', mlRoutes);
 
     // 404 handler
     this.app.use('*', (req, res) => {
@@ -152,6 +162,18 @@ class AiService {
       await AiQueueService.initialize();
       logger.info('AI Queue service initialized');
 
+      // Initialize ML Pipeline
+      this.mlPipeline = new MLPipelineService();
+      logger.info('ML Pipeline initialized');
+
+      // Initialize Industry Models
+      this.industryModels = new IndustryModelsService(this.mlPipeline);
+      logger.info('Industry Models initialized');
+
+      // Initialize Predictive Analytics
+      this.predictiveAnalytics = new PredictiveAnalyticsService(this.mlPipeline);
+      logger.info('Predictive Analytics initialized');
+
       // Initialize AI providers
       const { AiProviderManager } = await import('@/services/ai-provider-manager');
       await AiProviderManager.initialize();
@@ -162,12 +184,22 @@ class AiService {
       await queueWorker.start();
       logger.info('Queue workers started');
 
+      // Add ML services to app context
+      (this.app as any).mlPipeline = this.mlPipeline;
+      (this.app as any).industryModels = this.industryModels;
+      (this.app as any).predictiveAnalytics = this.predictiveAnalytics;
+
       // Start server
       this.server = this.app.listen(config.port, () => {
-        logger.info(`AI Service started on port ${config.port}`, {
+        logger.info(`AI Service with ML capabilities started on port ${config.port}`, {
           service: config.serviceName,
           environment: config.nodeEnv,
           version: process.env.npm_package_version || '1.0.0',
+          mlCapabilities: {
+            pipeline: !!this.mlPipeline,
+            industryModels: !!this.industryModels,
+            predictiveAnalytics: !!this.predictiveAnalytics,
+          },
         });
       });
 
